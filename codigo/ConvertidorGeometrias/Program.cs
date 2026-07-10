@@ -77,10 +77,22 @@ namespace ConvertidorGeometrias
         // Agregar/quitar categorías acá según necesidad.
         static readonly HashSet<int> CategoriasProtegidas = new HashSet<int>
         {
-            -2000011, // OST_Walls  (Muros)
-            -2000032, // OST_Floors (Suelos)
-            -2000035, // OST_Roofs  (Techos)
+            -2000011, // OST_Walls   (Muros)
+            -2000032, // OST_Floors  (Suelos)
+            -2000035, // OST_Roofs   (Techos)
+            -2000014, // OST_Windows (Ventanas: el decimado rompe los paños)
         };
+
+        // El decimado destroza los paños de vidrio (mallas casi planas y finas).
+        // Un vidrio queda protegido si es translúcido (alpha < 255) o si es un
+        // panel casi negro sin categoría/ventana — el patrón de un paño cuyo
+        // asset de apariencia no llegó al exportador.
+        static bool EsVidrioProtegido(MeshData m)
+        {
+            if (m.HasColor && m.ColA < 255) return true;
+            bool casiNegro = m.HasColor && m.ColR < 70 && m.ColG < 70 && m.ColB < 70;
+            return casiNegro && (m.CategoryId == 0 || m.CategoryId == -2000014 || m.CategoryId == -2000023);
+        }
 
         static void Main(string[] args)
         {
@@ -426,7 +438,8 @@ namespace ConvertidorGeometrias
 
                 // Categorías protegidas (muros/suelos/techos): NO se decimán nunca.
                 // Ya vienen optimizadas de Revit; solo reciben soldadura y limpieza (sin pérdida).
-                bool protegidaPorCategoria = CategoriasProtegidas.Contains(mergedMesh.CategoryId);
+                bool protegidaPorCategoria = CategoriasProtegidas.Contains(mergedMesh.CategoryId)
+                                             || EsVidrioProtegido(mergedMesh);
 
                 // Guarda anti-cubos: piezas chicas (cubos, prismas, detalles) NO se decimán.
                 bool decimable = !protegidaPorCategoria &&

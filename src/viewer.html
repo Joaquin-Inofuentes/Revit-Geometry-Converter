@@ -8,16 +8,18 @@
     <!-- Inline icon: keeps the file self-contained and avoids a /favicon.ico 404. -->
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%233b82f6'/%3E%3Cpath d='M4 11V6l4-2 4 2v5' stroke='white' stroke-width='1.4' fill='none'/%3E%3C/svg%3E">
     <style>
+        /* Tema claro: fondo blanco, textos y controles gris/negro de alto
+           contraste (pedido explícito). Nada de blanco-sobre-blanco. */
         :root {
-            --bg-grad-start: #020617;
-            --bg-grad-end: #0f172a;
-            --panel-bg: rgba(15, 23, 42, 0.72);
-            --panel-border: rgba(255, 255, 255, 0.08);
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --accent: #3b82f6;
-            --accent-hover: #60a5fa;
-            --danger: #ef4444;
+            --bg: #ffffff;
+            --bg-soft: #eef1f5;
+            --panel-bg: rgba(255, 255, 255, 0.94);
+            --panel-border: rgba(0, 0, 0, 0.14);
+            --text-main: #111418;        /* casi negro */
+            --text-muted: #444a52;       /* gris oscuro, legible sobre blanco */
+            --accent: #0b0d10;           /* botón/estado activo: negro puro */
+            --accent-soft: #1e293b;
+            --danger: #b91c1c;
             --safe-t: env(safe-area-inset-top, 0px);
             --safe-b: env(safe-area-inset-bottom, 0px);
             --safe-l: env(safe-area-inset-left, 0px);
@@ -31,7 +33,7 @@
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
             overflow: hidden;
-            background: radial-gradient(circle at center, var(--bg-grad-end), var(--bg-grad-start));
+            background: radial-gradient(circle at 50% 40%, #ffffff, var(--bg-soft));
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             color: var(--text-main);
             user-select: none; -webkit-user-select: none;
@@ -45,10 +47,10 @@
         .glass-panel {
             position: absolute; z-index: 10;
             background: var(--panel-bg);
-            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
             border: 1px solid var(--panel-border);
             border-radius: 16px;
-            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+            box-shadow: 0 12px 30px -8px rgba(0,0,0,0.28);
         }
 
         /* ---------- Anchors: each panel owns one screen corner ---------- */
@@ -85,22 +87,21 @@
             right: calc(var(--gap) + var(--safe-r));
             display: flex; flex-direction: column; gap: 8px;
         }
-        .tool-btn { background: var(--panel-bg); }
-        .tool-btn.tool-active { background: var(--accent); border-color: var(--accent); }
+        .tool-btn { background: #fff; }
 
         #cat-menu {
             position: absolute; z-index: 16;
             top: calc(var(--gap) * 2 + var(--safe-t) + var(--minimap));
             right: calc(var(--gap) * 2 + var(--safe-r) + 34px);
             width: 190px; max-height: 55dvh; overflow-y: auto;
-            background: var(--panel-bg);
-            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-            border: 1px solid var(--panel-border); border-radius: 12px;
+            background: #fff;
+            border: 1.5px solid rgba(0,0,0,0.2); border-radius: 12px;
+            box-shadow: 0 12px 30px -8px rgba(0,0,0,0.3);
             padding: 10px;
         }
         .cat-head {
             font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
-            color: var(--text-muted); font-weight: 600;
+            color: var(--text-muted); font-weight: 700;
             border-bottom: 1px solid var(--panel-border);
             padding-bottom: 6px; margin-bottom: 6px;
             display: flex; justify-content: space-between; align-items: baseline;
@@ -110,21 +111,24 @@
             display: flex; align-items: center; gap: 8px;
             padding: 5px 4px; border-radius: 8px; font-size: 13px;
         }
-        .cat-row:hover { background: rgba(255,255,255,0.06); }
+        .cat-row:hover { background: var(--bg-soft); }
         .cat-row.cat-off .cat-name { color: var(--text-muted); text-decoration: line-through; }
-        .cat-name { flex: 1 1 auto; cursor: pointer; }
-        .cat-name:hover { color: var(--accent-hover); }
+        .cat-name { flex: 1 1 auto; cursor: pointer; font-weight: 500; }
+        .cat-name:hover { color: var(--accent); text-decoration: underline; }
+        .cat-row input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
         .cat-reset { width: 100%; margin-top: 8px; padding: 7px 0; font-size: 12px; }
 
         /* ---------- Dimension labels (always readable, on top of 3D) ---------- */
         #dim-labels { position: absolute; inset: 0; z-index: 25; pointer-events: none; }
         .dim-label {
             position: absolute; transform: translate(-50%, -50%);
-            background: rgba(2,6,23,0.88); color: #fff;
-            border: 1px solid rgba(250,204,21,0.55);
-            font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+            background: #111418; color: #fff;
+            border: 1.5px solid #f59e0b;
+            font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
             padding: 2px 7px; border-radius: 7px; white-space: nowrap;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.35);
         }
+        .dim-label.dim-area { border-color: #2563eb; }
 
         #info-panel {
             bottom: calc(var(--gap) + var(--safe-b));
@@ -142,17 +146,17 @@
             display: none; position: absolute;
             bottom: calc(30px + var(--safe-b)); left: calc(30px + var(--safe-l));
             width: 140px; height: 140px;
-            background: rgba(255,255,255,0.05);
-            border-radius: 50%; border: 2px solid rgba(255,255,255,0.12);
+            background: rgba(255,255,255,0.7);
+            border-radius: 50%; border: 1.5px solid rgba(0,0,0,0.22);
             z-index: 20; touch-action: none;
-            backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+            box-shadow: 0 4px 14px rgba(0,0,0,0.18);
         }
         #joystick-knob {
             position: absolute; top: 50%; left: 50%;
             width: 60px; height: 60px;
             margin: -30px 0 0 -30px;
             background: var(--accent); border-radius: 50%;
-            box-shadow: 0 4px 12px rgba(59,130,246,0.5);
+            box-shadow: 0 3px 10px rgba(0,0,0,0.4);
             pointer-events: none;
             transition: transform .08s ease-out;
         }
@@ -165,14 +169,14 @@
         }
         .elev-btn {
             width: 60px; height: 60px;
-            background: rgba(255,255,255,0.08);
-            border: 2px solid rgba(255,255,255,0.2);
-            border-radius: 50%; color: #fff; font-size: 22px;
+            background: rgba(255,255,255,0.9);
+            border: 1.5px solid rgba(0,0,0,0.25);
+            border-radius: 50%; color: var(--text-main); font-size: 22px; font-weight: 700;
             touch-action: none; -webkit-tap-highlight-color: transparent;
-            backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+            box-shadow: 0 3px 10px rgba(0,0,0,0.18);
             display: flex; align-items: center; justify-content: center; cursor: pointer;
         }
-        .elev-btn.pressed { background: var(--accent); border-color: var(--accent); }
+        .elev-btn.pressed { background: var(--accent); border-color: var(--accent); color: #fff; }
 
         /* Info panel open on phones hides the movement controls so nothing overlaps */
         body.info-open #joystick-container,
@@ -185,20 +189,38 @@
             flex: 0 0 auto;
         }
         .panel-head .titles { flex: 1 1 auto; min-width: 0; }
+
+        /* Colapsado = botón cuadrado y simple, sin texto ni fondo de panel.
+           Es el estado por defecto para dejar la vista despejada. */
+        body.panel-collapsed #ui-panel {
+            width: auto; background: none; border: none; box-shadow: none;
+            backdrop-filter: none; -webkit-backdrop-filter: none;
+        }
+        body.panel-collapsed .panel-head { padding: 0; }
+        body.panel-collapsed .panel-head .titles { display: none; }
+        body.panel-collapsed #ui-toggle {
+            width: 42px; height: 42px; border-radius: 10px; font-size: 18px;
+        }
         h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.4px; }
         .subtitle { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-        h2 { margin: 0 0 14px 0; font-size: 14px; color: var(--accent-hover); }
+        h2 { margin: 0 0 14px 0; font-size: 14px; color: var(--text-main); font-weight: 700; }
 
         .icon-btn {
             flex: 0 0 auto;
             width: 34px; height: 34px; border-radius: 10px;
-            border: 1px solid var(--panel-border);
-            background: rgba(255,255,255,0.06); color: var(--text-main);
+            border: 1.5px solid rgba(0,0,0,0.25);
+            background: #ffffff; color: var(--text-main);
             display: flex; align-items: center; justify-content: center;
-            cursor: pointer; font-size: 15px; line-height: 1;
+            cursor: pointer; font-size: 15px; line-height: 1; font-weight: 600;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.18);
             -webkit-tap-highlight-color: transparent;
         }
-        .icon-btn:hover { background: rgba(255,255,255,0.12); }
+        .icon-btn:hover { background: var(--bg-soft); border-color: rgba(0,0,0,0.4); }
+        /* Estado activo: negro pleno, ícono blanco — máximo contraste. */
+        .tool-btn.tool-active,
+        .icon-btn.is-active {
+            background: var(--accent) !important; border-color: var(--accent) !important; color: #fff !important;
+        }
         #ui-toggle { display: flex; }
         #ui-toggle .chev { transition: transform .25s ease; }
         body.panel-collapsed #ui-toggle .chev { transform: rotate(-90deg); }
@@ -218,37 +240,38 @@
             display: flex; justify-content: space-between; align-items: baseline;
         }
         .link-btn {
-            background: none; border: none; color: var(--accent-hover);
-            font: inherit; font-size: 10px; letter-spacing: .5px;
+            background: none; border: none; color: var(--text-main);
+            font: inherit; font-size: 10px; letter-spacing: .5px; font-weight: 700;
             cursor: pointer; padding: 0; text-transform: uppercase;
+            text-decoration: underline;
         }
-        .link-btn:hover { color: #fff; }
+        .link-btn:hover { color: var(--accent); }
 
         .control-group { margin-bottom: 16px; }
         .control-group label {
             display: flex; justify-content: space-between;
             margin-bottom: 6px; font-size: 12px; color: var(--text-main);
         }
-        .control-group .val { color: var(--accent-hover); font-variant-numeric: tabular-nums; font-size: 11px; }
+        .control-group .val { color: var(--text-main); font-weight: 600; font-variant-numeric: tabular-nums; font-size: 11px; }
 
         input[type="range"] {
             width: 100%; -webkit-appearance: none; appearance: none;
             background: transparent; margin: 0 0 6px 0;
             touch-action: none; cursor: pointer;
         }
-        input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; }
+        input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 4px; background: rgba(0,0,0,0.18); border-radius: 2px; }
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
-            background: var(--accent); margin-top: -6px;
-            box-shadow: 0 0 10px rgba(59,130,246,0.5); transition: transform .1s;
+            background: var(--accent); margin-top: -6px; border: 2px solid #fff;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.35); transition: transform .1s;
         }
         input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
-        input[type="range"]::-moz-range-track { width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; }
-        input[type="range"]::-moz-range-thumb { height: 16px; width: 16px; border: none; border-radius: 50%; background: var(--accent); }
+        input[type="range"]::-moz-range-track { width: 100%; height: 4px; background: rgba(0,0,0,0.18); border-radius: 2px; }
+        input[type="range"]::-moz-range-thumb { height: 16px; width: 16px; border: 2px solid #fff; border-radius: 50%; background: var(--accent); }
 
         .stats {
             font-size: 11px; color: var(--text-muted); margin-top: 18px;
-            background: rgba(0,0,0,0.25); padding: 12px; border-radius: 10px; line-height: 1.7;
+            background: var(--bg-soft); padding: 12px; border-radius: 10px; line-height: 1.7;
         }
         .stats .row { display: flex; justify-content: space-between; gap: 8px; }
         .stats .k { color: var(--text-muted); }
@@ -256,49 +279,54 @@
 
         .info-row {
             display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px;
-            font-size: 13px; border-bottom: 1px dashed rgba(255,255,255,0.06); padding-bottom: 5px;
+            font-size: 13px; border-bottom: 1px dashed rgba(0,0,0,0.12); padding-bottom: 5px;
         }
         .info-label { color: var(--text-muted); flex: 0 0 auto; }
-        .info-val { font-weight: 500; user-select: text; -webkit-user-select: text; text-align: right; word-break: break-all; }
+        .info-val { font-weight: 600; user-select: text; -webkit-user-select: text; text-align: right; word-break: break-all; }
         .info-head { display: flex; align-items: flex-start; justify-content: space-between; }
+        .info-actions { display: flex; gap: 8px; margin-top: 14px; }
+        .info-actions .btn { flex: 1 1 0; margin-top: 0; padding: 9px 0; font-size: 12px; }
 
         /* ---------- Loader / dropzone ---------- */
         #loader {
             position: absolute; inset: 0;
-            background: var(--bg-grad-end); z-index: 100;
+            background: var(--bg); z-index: 100;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             transition: opacity .45s ease; padding: 24px; text-align: center;
         }
         #loader.hidden { opacity: 0; pointer-events: none; }
         .spinner {
-            width: 56px; height: 56px; border: 4px solid rgba(255,255,255,0.1);
+            width: 56px; height: 56px; border: 4px solid rgba(0,0,0,0.12);
             border-top-color: var(--accent); border-radius: 50%;
             animation: spin 1s cubic-bezier(.5,0,.5,1) infinite; margin-bottom: 22px;
         }
         @keyframes spin { 100% { transform: rotate(360deg); } }
-        #loader-text { font-weight: 500; letter-spacing: 1px; font-size: 14px; }
-        #loader-bar { width: min(280px, 70vw); height: 3px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 18px; overflow: hidden; }
+        #loader-text { font-weight: 600; letter-spacing: 1px; font-size: 14px; }
+        #loader-bar { width: min(280px, 70vw); height: 3px; background: rgba(0,0,0,0.12); border-radius: 2px; margin-top: 18px; overflow: hidden; }
         #loader-bar > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .2s ease; }
 
         #dropzone {
             position: absolute; inset: 0; z-index: 90;
             display: none; flex-direction: column; align-items: center; justify-content: center;
             gap: 16px; padding: 24px; text-align: center;
-            background: rgba(2,6,23,0.85);
+            background: rgba(255,255,255,0.92);
         }
         #dropzone.show { display: flex; }
         #dropzone .box {
-            border: 2px dashed rgba(255,255,255,0.2); border-radius: 20px;
+            border: 2px dashed rgba(0,0,0,0.25); border-radius: 20px;
             padding: 40px 32px; max-width: 460px;
         }
         .btn {
             display: inline-block; margin-top: 16px; padding: 10px 18px;
-            background: var(--accent); color: #fff; border: none; border-radius: 10px;
-            font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+            background: var(--accent); color: #fff; border: 1.5px solid var(--accent); border-radius: 10px;
+            font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
         }
-        .btn:hover { background: var(--accent-hover); }
+        .btn:hover { background: var(--accent-soft); }
+        .btn.btn-ghost { background: #fff; color: var(--text-main); border-color: rgba(0,0,0,0.28); }
+        .btn.btn-ghost:hover { background: var(--bg-soft); }
         body.dragging #dropzone { display: flex; }
-        body.dragging #dropzone .box { border-color: var(--accent); background: rgba(59,130,246,0.08); }
+        body.dragging #dropzone .box { border-color: var(--accent); background: rgba(0,0,0,0.04); }
 
         #error-stack { position: absolute; top: 0; left: 0; right: 0; z-index: 9999; pointer-events: none; }
         .error-toast {
@@ -381,12 +409,14 @@
 
     <div id="minimap-box"></div>
 
-    <!-- Tool buttons live under the minimap: filter, measure, rays, gyro -->
-    <div id="toolbar">
+    <!-- Tool buttons live under the minimap: filter, measure, rays, gyro.
+         Hidden until a model is loaded (loadBuffer shows it). -->
+    <div id="toolbar" style="display:none">
         <button class="icon-btn tool-btn" id="tool-filter" title="Filtrar categorías" aria-label="Filtrar categorías">▦</button>
         <button class="icon-btn tool-btn" id="tool-reset-filter" title="Restablecer filtro" aria-label="Restablecer filtro" style="display:none">⟲</button>
-        <button class="icon-btn tool-btn" id="tool-measure" title="Acotar: dos puntos" aria-label="Acotar dos puntos">⟷</button>
-        <button class="icon-btn tool-btn" id="tool-rays" title="Cota multidireccional" aria-label="Cota multidireccional">✛</button>
+        <button class="icon-btn tool-btn" id="tool-measure" title="Cota manual (contigua, con área)" aria-label="Cota manual contigua">⟷</button>
+        <button class="icon-btn tool-btn" id="tool-rays" title="Cota espacial (rayos)" aria-label="Cota espacial">✛</button>
+        <button class="icon-btn tool-btn" id="tool-measure-reset" title="Restablecer cota" aria-label="Restablecer cota" style="display:none">⌫</button>
         <button class="icon-btn tool-btn" id="tool-gyro" title="Giroscopio" aria-label="Giroscopio">◎</button>
         <button class="icon-btn tool-btn" id="tool-north" title="Calibrar norte" aria-label="Calibrar norte" style="display:none">N</button>
     </div>
@@ -621,11 +651,13 @@
         renderer.localClippingEnabled = true;
         container.appendChild(renderer.domElement);
 
-        scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x1b2130, 0.85));
-        const key = new THREE.DirectionalLight(0xffffff, 0.75);
+        // Ground term lightened for the white background: undersides should
+        // read as grey, not black holes floating on the page.
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa3ad, 0.9));
+        const key = new THREE.DirectionalLight(0xffffff, 0.7);
         key.position.set(0.6, 1, 0.45);
         scene.add(key);
-        const fill = new THREE.DirectionalLight(0xdbeafe, 0.28);
+        const fill = new THREE.DirectionalLight(0xffffff, 0.25);
         fill.position.set(-0.7, 0.35, -0.6);
         scene.add(fill);
 
@@ -1488,6 +1520,60 @@
         toPos: new THREE.Vector3(), toTgt: new THREE.Vector3()
     };
 
+    // ------------------------------------------------------------------
+    // Modo de navegación: 'orbit' (girar alrededor del modelo) o 'walk'
+    // (primera persona). Un rayo hacia abajo decide: si hay piso a menos de
+    // ~altura de ojos + margen, estás parado; si no, estás volando.
+    //
+    // En modo walk el pivote de OrbitControls se acerca a 60 cm delante de
+    // la cámara y el sentido de arrastre se invierte: mantener click y
+    // arrastrar "gira la cabeza" desde el mismo lugar, como una persona.
+    // ------------------------------------------------------------------
+    let walkMode = false;
+    let lastFloorCheck = 0;
+    const downRay = new THREE.Raycaster();
+    const DOWN = new THREE.Vector3(0, -1, 0);
+
+    function standingOnFloor() {
+        downRay.set(camera.position, DOWN);
+        downRay.far = EYE_HEIGHT * 1.8;   // parado, con margen para escalones
+        const hits = downRay.intersectObjects(visibleParts(), false);
+        const eps = modelSize * 1e-4;
+        for (const hit of hits) {
+            if (hit.object.userData.isGlass) continue;
+            if (pointInBox(hit.point, eps)) return true;
+        }
+        return false;
+    }
+
+    function setNavMode(walking) {
+        if (walking === walkMode) return;
+        walkMode = walking;
+        camera.getWorldDirection(moveDir);
+        if (walking) {
+            // Pivote pegado a la cámara + arrastre invertido = mirar.
+            controls.target.copy(camera.position).addScaledVector(moveDir, 0.6 * UNITS_PER_METER);
+            controls.rotateSpeed = -0.45;
+            controls.enablePan = false;
+        } else {
+            // Pivote a distancia cómoda para volver a orbitar.
+            controls.target.copy(camera.position).addScaledVector(moveDir, Math.max(8 * UNITS_PER_METER, modelSize * 0.05));
+            controls.rotateSpeed = 1;
+            controls.enablePan = true;
+        }
+        controls.update();
+        markDirty();
+    }
+
+    // Barato de llamar seguido: el raycast sólo corre cada 400 ms y sólo
+    // cuando la cámara realmente se movió.
+    function refreshNavMode(force) {
+        const now = performance.now();
+        if (!force && now - lastFloorCheck < 400) return;
+        lastFloorCheck = now;
+        setNavMode(standingOnFloor());
+    }
+
     // Stops the glide and hides the destination beacon, whatever the cause:
     // arrival, grabbing the scene, or manual movement input.
     function cancelWalk() {
@@ -1559,7 +1645,12 @@
         controls.target.lerpVectors(walk.fromTgt, walk.toTgt, k);
         // Soft pulse so the beacon reads as "destination", not geometry.
         walkMarker.scale.setScalar(1 + 0.18 * Math.sin(t * Math.PI * 4));
-        if (t >= 1) { userMovedCamera = true; cancelWalk(); }
+        if (t >= 1) {
+            userMovedCamera = true;
+            cancelWalk();
+            // Acaba de aterrizar a altura de ojos sobre un piso: modo vista.
+            setNavMode(true);
+        }
         return true;
     }
 
@@ -1581,7 +1672,8 @@
         cancelWalk();  // manual input takes over from any glide
 
         // Speed follows the model's scale, and time, not the frame rate.
-        let speed = modelSize * 0.28 * dt;
+        // 0.14 (era 0.28): el stick se sentía demasiado rápido.
+        let speed = modelSize * 0.14 * dt;
         if (keys['ShiftLeft'] || keys['ShiftRight']) speed *= 3;
 
         camera.getWorldDirection(moveDir);
@@ -1598,37 +1690,51 @@
         camera.position.add(moveDelta);
         controls.target.add(moveDelta);
         userMovedCamera = true;
+        refreshNavMode();   // ¿sigo parado en el piso o ya estoy volando?
         return true;
     }
 
     // ==================================================================
-    // MODULE: Measure — dimension tools.
+    // MODULE: Measure — herramientas de cota inteligentes.
     //
-    //   'two'  : click corner A, click corner B -> one dimension.
-    //   'rays' : click one point -> rays in ±X ±Y ±Z, one dimension per
-    //            surface hit (room width/depth/height from a single tap).
+    //   'chain' (manual contigua): cada click agrega un vértice. Se dibuja el
+    //           segmento con su longitud, y al tener 3+ vértices se cierra el
+    //           polígono y se muestra el ÁREA en el centroide. Botón para
+    //           restablecer la cota.
+    //   'rays'  (espacial): un click lanza rayos en ±X ±Y ±Z. Simple: una
+    //           sola medición a la vez — cada click reemplaza la anterior.
     //
-    // Lines render with depthTest off; the numbers are DOM chips projected
-    // every rendered frame, so they stay readable at any angle and cost no
-    // GPU text rendering (important on low-end phones).
+    // Las líneas se dibujan con depthTest off; los números son chips DOM
+    // reproyectados por frame: legibles en cualquier ángulo y sin costo de
+    // texto en GPU (clave en gama baja).
     // ==================================================================
     const Measure = {
         mode: 'none',
-        ptA: null,
-        dims: [],            // { line, labelEl, mid }
+        dims: [],            // { line?, labelEl, mid, kind }
+        chain: [],           // vértices de la cadena manual (Vector3)
         _proj: new THREE.Vector3(),
         _lineMat: null,
+        _areaMat: null,
+        _areaMesh: null,
 
         setMode(mode) {
             const next = this.mode === mode ? 'none' : mode;
             this.clear();
             this.mode = next;
-            $('tool-measure').classList.toggle('tool-active', next === 'two');
+            $('tool-measure').classList.toggle('tool-active', next === 'chain');
             $('tool-rays').classList.toggle('tool-active', next === 'rays');
+            $('tool-measure-reset').style.display = (next !== 'none') ? 'flex' : 'none';
+            markDirty();
         },
 
-        // First surface hit inside the section box, glass included: a ray
-        // aimed at a window should measure to the window.
+        lineMat() {
+            if (!this._lineMat) this._lineMat = new THREE.LineBasicMaterial({
+                color: srgbHex(0xf59e0b), depthTest: false, transparent: true, opacity: 0.98
+            });
+            return this._lineMat;
+        },
+
+        // Primer impacto contra superficie visible dentro de la caja de corte.
         surfacePoint(clientX, clientY) {
             pointerNdc.x = (clientX / window.innerWidth) * 2 - 1;
             pointerNdc.y = -(clientY / window.innerHeight) * 2 + 1;
@@ -1643,34 +1749,91 @@
         click(clientX, clientY) {
             const p = this.surfacePoint(clientX, clientY);
             if (!p) return;
+            if (this.mode === 'chain') this.addChainPoint(p);
+            else if (this.mode === 'rays') this.spatial(p);
+        },
 
-            if (this.mode === 'two') {
-                if (!this.ptA) {
-                    this.ptA = p;
-                    this._pending = this.addLabel('A');
-                    this._pending.mid = p;
-                    markDirty();
-                } else {
-                    if (this._pending) { this._pending.labelEl.remove(); this._pending = null; }
-                    this.addDim(this.ptA, p);
-                    this.ptA = null;
-                }
-            } else if (this.mode === 'rays') {
-                const dirs = [
-                    new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
-                    new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
-                    new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)
-                ];
-                for (const dir of dirs) {
-                    const hit = this.castRay(p, dir);
-                    if (hit) this.addDim(p, hit);
-                }
+        // ---- Cadena manual contigua ----
+        addChainPoint(p) {
+            const prev = this.chain[this.chain.length - 1];
+            this.chain.push(p);
+            if (prev) this.addSegment(prev, p);
+            this.refreshArea();
+            markDirty();
+        },
+
+        addSegment(a, b) {
+            const meters = a.distanceTo(b) / UNITS_PER_METER;
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+                a.x, a.y, a.z, b.x, b.y, b.z
+            ]), 3));
+            const line = new THREE.Line(geo, this.lineMat());
+            line.renderOrder = 3; line.frustumCulled = false;
+            scene.add(line);
+            const dim = this.addLabel(fmtM(meters), 'len');
+            dim.line = line;
+            dim.mid = a.clone().add(b).multiplyScalar(0.5);
+        },
+
+        // Con 3+ puntos, cierra el polígono, arma la malla de relleno y muestra
+        // el área. Se recalcula en cada punto nuevo.
+        refreshArea() {
+            if (this._areaMesh) { scene.remove(this._areaMesh); this._areaMesh.geometry.dispose(); this._areaMesh = null; }
+            const areaDim = this.dims.find((d) => d.kind === 'area');
+            if (areaDim) { areaDim.labelEl.remove(); this.dims = this.dims.filter((d) => d !== areaDim); }
+            if (this.chain.length < 3) return;
+
+            if (!this._areaMat) this._areaMat = new THREE.MeshBasicMaterial({
+                color: srgbHex(0x2563eb), transparent: true, opacity: 0.22,
+                side: THREE.DoubleSide, depthWrite: false
+            });
+
+            // Triángulo-abanico desde el primer vértice (polígono simple).
+            const n = this.chain.length;
+            const pos = new Float32Array(n * 3);
+            for (let i = 0; i < n; i++) { pos[i*3] = this.chain[i].x; pos[i*3+1] = this.chain[i].y; pos[i*3+2] = this.chain[i].z; }
+            const idx = [];
+            for (let i = 1; i < n - 1; i++) idx.push(0, i, i + 1);
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.setIndex(idx);
+            this._areaMesh = new THREE.Mesh(geo, this._areaMat);
+            this._areaMesh.renderOrder = 2; this._areaMesh.frustumCulled = false;
+            scene.add(this._areaMesh);
+
+            // Área por la fórmula del semiproducto vectorial en 3D.
+            let cx = 0, cy = 0, cz = 0, area2 = new THREE.Vector3();
+            const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), cr = new THREE.Vector3();
+            for (let i = 1; i < n - 1; i++) {
+                e1.subVectors(this.chain[i], this.chain[0]);
+                e2.subVectors(this.chain[i + 1], this.chain[0]);
+                cr.crossVectors(e1, e2);
+                area2.add(cr);
             }
+            const areaM2 = 0.5 * area2.length() / (UNITS_PER_METER * UNITS_PER_METER);
+            for (const v of this.chain) { cx += v.x; cy += v.y; cz += v.z; }
+            const dim = this.addLabel(areaM2.toFixed(2).replace('.', ',') + ' m²', 'area');
+            dim.labelEl.classList.add('dim-area');
+            dim.mid = new THREE.Vector3(cx / n, cy / n, cz / n);
+        },
+
+        // ---- Cota espacial (una sola a la vez) ----
+        spatial(p) {
+            this.clearDims();   // reemplaza la medición anterior
+            const dirs = [
+                new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+                new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
+                new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)
+            ];
+            for (const dir of dirs) {
+                const hit = this.castRay(p, dir);
+                if (hit) this.addSegment(p, hit);
+            }
+            markDirty();
         },
 
         castRay(origin, dir) {
-            // Start a hair away from the clicked surface so the ray does not
-            // immediately re-hit it at distance zero.
             const eps = 0.02 * UNITS_PER_METER;
             raycaster.set(origin.clone().addScaledVector(dir, eps), dir);
             raycaster.far = modelSize * 2;
@@ -1685,41 +1848,16 @@
             return found;
         },
 
-        addDim(a, b) {
-            const meters = a.distanceTo(b) / UNITS_PER_METER;
-            if (meters < 0.01) return;
-
-            if (!this._lineMat) {
-                this._lineMat = new THREE.LineBasicMaterial({
-                    color: srgbHex(0xfacc15), depthTest: false, transparent: true, opacity: 0.95
-                });
-            }
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-                a.x, a.y, a.z, b.x, b.y, b.z
-            ]), 3));
-            const line = new THREE.Line(geo, this._lineMat);
-            line.renderOrder = 3;
-            line.frustumCulled = false;
-            scene.add(line);
-
-            const dim = this.addLabel(meters.toFixed(2).replace('.', ',') + ' m');
-            dim.line = line;
-            dim.mid = a.clone().add(b).multiplyScalar(0.5);
-            markDirty();
-        },
-
-        addLabel(text) {
+        addLabel(text, kind) {
             const el = document.createElement('div');
             el.className = 'dim-label';
             el.textContent = text;
             $('dim-labels').appendChild(el);
-            const dim = { line: null, labelEl: el, mid: null };
+            const dim = { line: null, labelEl: el, mid: null, kind: kind || 'len' };
             this.dims.push(dim);
             return dim;
         },
 
-        // Re-projects every label chip. Runs only on frames that render.
         updateLabels() {
             if (this.dims.length === 0) return;
             for (const d of this.dims) {
@@ -1734,17 +1872,29 @@
             }
         },
 
-        clear() {
+        clearDims() {
             for (const d of this.dims) {
                 if (d.line) { scene.remove(d.line); d.line.geometry.dispose(); }
                 d.labelEl.remove();
             }
             this.dims = [];
-            this.ptA = null;
-            this._pending = null;
+        },
+
+        // "Restablecer cota": borra lo dibujado pero deja la herramienta activa.
+        reset() {
+            this.clearDims();
+            this.chain = [];
+            if (this._areaMesh) { scene.remove(this._areaMesh); this._areaMesh.geometry.dispose(); this._areaMesh = null; }
             markDirty();
+        },
+
+        clear() {
+            this.reset();
+            $('tool-measure-reset').style.display = 'none';
         }
     };
+
+    const fmtM = (m) => m.toFixed(2).replace('.', ',') + ' m';
 
     // ==================================================================
     // MODULE: Gyro — orient the camera with the phone's gyroscope.
@@ -1844,8 +1994,9 @@
     function setupToolbar() {
         $('tool-filter').addEventListener('click', () => CategoryFilter.toggleMenu());
         $('tool-reset-filter').addEventListener('click', () => CategoryFilter.reset());
-        $('tool-measure').addEventListener('click', () => Measure.setMode('two'));
+        $('tool-measure').addEventListener('click', () => Measure.setMode('chain'));
         $('tool-rays').addEventListener('click', () => Measure.setMode('rays'));
+        $('tool-measure-reset').addEventListener('click', () => Measure.reset());
         $('tool-gyro').addEventListener('click', () => Gyro.toggle());
         $('tool-north').addEventListener('click', () => Gyro.calibrate());
     }
@@ -1963,13 +2114,21 @@
 
         const mat = tbvData.materials[inst.matIdx];
         $('info-content').innerHTML =
+            infoRow('Categoría', catName(inst.catId)) +
             infoRow('Element ID', inst.elemId) +
             infoRow('Category ID', inst.catId) +
             infoRow('Mesh Pool ID', inst.meshIdx) +
             infoRow('Material', `#${mat.matId} · rgba(${mat.r},${mat.g},${mat.b},${mat.a})`) +
             infoRow('Triángulos', src.tc.toLocaleString('es')) +
             infoRow('Posición', `${inst.dx.toFixed(2)}, ${inst.dy.toFixed(2)}, ${inst.dz.toFixed(2)}`) +
-            infoRow('GUID', inst.guid);
+            infoRow('GUID', inst.guid) +
+            `<div class="info-actions">
+                <button class="btn" id="info-isolate">Aislar categoría</button>
+                <button class="btn btn-ghost" id="info-reset-filter">Restablecer filtros</button>
+             </div>`;
+
+        $('info-isolate').addEventListener('click', () => CategoryFilter.isolate(inst.catId));
+        $('info-reset-filter').addEventListener('click', () => CategoryFilter.reset());
 
         const panel = $('info-panel');
         panel.style.display = 'block';
@@ -1994,12 +2153,9 @@
     // ==================================================================
     // Panel chrome
     // ==================================================================
-    let panelUserToggled = false;
-
     function setupPanelUi() {
         const toggle = $('ui-toggle');
         toggle.addEventListener('click', () => {
-            panelUserToggled = true;
             const collapsed = document.body.classList.toggle('panel-collapsed');
             toggle.setAttribute('aria-expanded', String(!collapsed));
             minimapRect = null;
@@ -2011,22 +2167,10 @@
             fitCamera();
         });
 
-        // Desktop starts expanded, phones collapsed so the model stays
-        // visible. Re-evaluated whenever the breakpoint is crossed (rotation,
-        // window resize) unless the user has taken over the toggle.
-        applyBreakpoint();
-        const onBreakpoint = () => { applyBreakpoint(); minimapRect = null; markDirty(); };
-        if (phoneMq.addEventListener) phoneMq.addEventListener('change', onBreakpoint);
-        else phoneMq.addListener(onBreakpoint);
-
+        // Collapsed by default everywhere (pedido: máxima comodidad, vista
+        // despejada). El body ya trae la clase panel-collapsed en el HTML.
+        $('ui-toggle').setAttribute('aria-expanded', 'false');
         window.addEventListener('resize', () => { minimapRect = null; });
-    }
-
-    function applyBreakpoint() {
-        if (panelUserToggled) return;
-        const collapsed = isPhone();
-        document.body.classList.toggle('panel-collapsed', collapsed);
-        $('ui-toggle').setAttribute('aria-expanded', String(!collapsed));
     }
 
     // Largest |NDC| among the model's 8 bounding-box corners. <= 1 means the
@@ -2057,6 +2201,7 @@
     const FIT_TARGET = 0.92;
 
     function fitCamera() {
+        setNavMode(false);   // el encuadre general siempre es vista orbital
         const d = tbvData;
         const radius = 0.5 * Math.hypot(
             d.sceneMax[0] - d.sceneMin[0],
@@ -2180,25 +2325,51 @@
         return fn();
     }
 
-    async function base64ToBytes(b64) {
-        // The native data-URL decoder is several times faster than a
-        // charCodeAt loop over a 3 MB string, and it does not block as long.
-        // Skipped on file:// — some browsers block fetch() there entirely and
-        // log a scary "Unsafe attempt to load URL" security warning even
-        // though the catch below recovers.
-        if (location.protocol !== 'file:') {
-            try {
-                const res = await fetch('data:application/octet-stream;base64,' + b64);
-                return new Uint8Array(await res.arrayBuffer());
-            } catch (_) { /* fall through to the manual decoder */ }
-        }
-        const bin = atob(b64);
-        const out = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-        return out;
-    }
+    // ==================================================================
+    // MODULE: caché de binarios en IndexedDB. Guardar el .tbv evita volver a
+    // descargarlo/decodificarlo en la próxima carga (arranque casi instantáneo
+    // en móvil). Silencioso: si IndexedDB está bloqueado, se sigue sin caché.
+    // ==================================================================
+    const TbvCache = {
+        DB: 'mip-tbv', STORE: 'modelos', _db: null,
 
+        async open() {
+            if (this._db) return this._db;
+            return this._db = await new Promise((res) => {
+                let req;
+                try { req = indexedDB.open(this.DB, 1); } catch (_) { return res(null); }
+                req.onupgradeneeded = () => req.result.createObjectStore(this.STORE);
+                req.onsuccess = () => res(req.result);
+                req.onerror = () => res(null);
+            });
+        },
+        async get(key) {
+            const db = await this.open(); if (!db) return null;
+            return new Promise((res) => {
+                try {
+                    const r = db.transaction(this.STORE).objectStore(this.STORE).get(key);
+                    r.onsuccess = () => res(r.result || null);
+                    r.onerror = () => res(null);
+                } catch (_) { res(null); }
+            });
+        },
+        async put(key, bytes) {
+            const db = await this.open(); if (!db) return;
+            try {
+                db.transaction(this.STORE, 'readwrite').objectStore(this.STORE).put(bytes, key);
+            } catch (_) { /* cuota llena o bloqueado: se ignora */ }
+        },
+        async clear() {
+            const db = await this.open(); if (!db) return;
+            try { db.transaction(this.STORE, 'readwrite').objectStore(this.STORE).clear(); } catch (_) {}
+        }
+    };
+
+    // Núcleo de carga. Recibe el binario ya en memoria (ArrayBuffer o
+    // TypedArray) y arma toda la escena. Es lo que usa la API pública
+    // CargarBinario().
     async function loadBuffer(buffer) {
+        if (buffer.buffer && !(buffer instanceof ArrayBuffer)) buffer = buffer.buffer;
         ready = false;
         loaderEl.classList.remove('hidden');
         loaderEl.style.display = 'flex';
@@ -2226,7 +2397,9 @@
             });
 
             $('minimap-box').style.display = 'block';
+            $('toolbar').style.display = 'flex';
             $('dropzone').classList.remove('show');
+            document.body.classList.add('modelo-cargado');
             minimapRect = null;
 
             await step('Listo', 100, () => {});
@@ -2241,10 +2414,73 @@
         }
     }
 
-    async function loadFromBase64(b64) {
-        const bytes = await step('Decodificando modelo incrustado…', 20, () => base64ToBytes(b64));
+    // ==================================================================
+    // MODULE: API pública de carga. En el futuro el visor sólo recibe un
+    // binario y muestra todo; el base64 embebido es apenas el demo.
+    //
+    //   var DataDeGeometria = LeerBinario(base64Str);   // -> Uint8Array
+    //   CargarBinario(DataDeGeometria);                 // arma la escena
+    //   LimpiarTodo();                                  // descarga y limpia
+    //
+    // Se publican en window para que las pueda llamar cualquier anfitrión
+    // (Unity WebGL, otra página, la consola).
+    // ==================================================================
+    function LeerBinario(base64) {
+        const bin = atob(String(base64).trim());
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    }
+
+    // Acepta Uint8Array, ArrayBuffer o base64 (string). cacheKey opcional:
+    // si se pasa, el binario se guarda en IndexedDB para el próximo arranque.
+    async function CargarBinario(data, cacheKey) {
+        let bytes;
+        if (typeof data === 'string') bytes = LeerBinario(data);
+        else if (data instanceof ArrayBuffer) bytes = new Uint8Array(data);
+        else bytes = data;                                  // TypedArray
+        if (cacheKey) TbvCache.put(cacheKey, bytes);
         await loadBuffer(bytes.buffer);
     }
+
+    // Descarga el modelo, libera la GPU y deja el visor en blanco, listo para
+    // recibir otro binario. clearCache=true además borra el caché.
+    async function LimpiarTodo(clearCache) {
+        Measure.clear();
+        Gyro.disable();
+        CategoryFilter.reset();
+        setNavMode(false);
+        disposeScene();
+        tbvData = null;
+        selectedId = null;
+        ready = false;
+        closeInfo();
+        document.body.classList.remove('modelo-cargado');
+        $('minimap-box').style.display = 'none';
+        $('toolbar').style.display = 'none';
+        $('cat-menu').style.display = 'none';
+        $('dropzone').classList.add('show');
+        if (clearCache) await TbvCache.clear();
+        markDirty();
+    }
+
+    // Convenience: primero mira el caché, si no está descarga por URL.
+    async function CargarDesdeUrl(url, cacheKey) {
+        const key = cacheKey || url;
+        const cached = await TbvCache.get(key);
+        if (cached) { await loadBuffer(cached.buffer); return; }
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('No se pudo descargar el modelo: ' + res.status);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        TbvCache.put(key, bytes);
+        await loadBuffer(bytes.buffer);
+    }
+
+    // Nombres esperados por el pedido (español) + globales para el anfitrión.
+    window.LeerBinario = LeerBinario;
+    window.CargarBinario = CargarBinario;
+    window.CargarDesdeUrl = CargarDesdeUrl;
+    window.LimpiarTodo = LimpiarTodo;
 
     function setupFileLoading() {
         const input = $('file-input');
@@ -2305,9 +2541,13 @@
                 glassOpacity: (meshParts.find((m) => m.userData.isGlass) || { material: {} }).material.opacity || 0,
                 categories: CategoryFilter.cats().map((id) => ({ id, name: catName(id), on: !CategoryFilter.hidden.has(id) })),
                 filterActive: CategoryFilter.hidden.size > 0,
+                navMode: walkMode ? 'walk' : 'orbit',
                 measureMode: Measure.mode,
                 dimCount: Measure.dims.filter((d) => d.line).length,
                 dimLabels: Measure.dims.map((d) => d.labelEl.textContent),
+                chainPoints: Measure.chain.length,
+                areaLabel: (Measure.dims.find((d) => d.kind === 'area') || {}).labelEl ?
+                    Measure.dims.find((d) => d.kind === 'area').labelEl.textContent : null,
                 gyroActive: Gyro.active
             };
         },
@@ -2369,7 +2609,12 @@
             const d = new THREE.Vector3();
             camera.getWorldDirection(d);
             return Math.atan2(-d.x, -d.z) * 180 / Math.PI;
-        }
+        },
+        // Public loading API (also on window as CargarBinario/LimpiarTodo)
+        cargarBinario: CargarBinario,
+        limpiarTodo: LimpiarTodo,
+        leerBinario: LeerBinario,
+        walkMode() { return walkMode; }
     };
 
     // ==================================================================
@@ -2378,11 +2623,20 @@
     initThree();
     setupFileLoading();
 
-    window.addEventListener('load', () => {
+    // Arranque del DEMO: el base64 embebido es sólo un ejemplo. En producción
+    // el anfitrión llama CargarBinario()/CargarDesdeUrl() y esto no corre.
+    window.addEventListener('load', async () => {
         const embedded = document.getElementById('embedded-tbv');
         const payload = embedded ? embedded.textContent.trim() : '';
         if (payload.length > 100) {
-            loadFromBase64(payload).catch(() => {});
+            const cacheKey = 'demo:' + payload.length;   // versión = tamaño del payload
+            try {
+                const cached = await TbvCache.get(cacheKey);
+                if (cached) { await loadBuffer(cached.buffer); return; }
+                const bytes = await step('Decodificando modelo…', 20, () => LeerBinario(payload));
+                TbvCache.put(cacheKey, bytes);
+                await loadBuffer(bytes.buffer);
+            } catch (_) { /* loadBuffer ya reportó y mostró el dropzone */ }
         } else {
             loaderEl.style.display = 'none';
             $('dropzone').classList.add('show');

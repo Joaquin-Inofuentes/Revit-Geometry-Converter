@@ -156,7 +156,7 @@ async function main() {
         check('WebGL context alive', i.glCtxLost === false);
         check('base64 payload decoded: 2635 instances', i.instances === 2635, 'got ' + i.instances);
         check('materials parsed: 35', i.materials === 35, 'got ' + i.materials);
-        check('mesh pool parsed: 2536', i.pool === 2536, 'got ' + i.pool);
+        check('mesh pool parsed: 2535', i.pool === 2535, 'got ' + i.pool);
 
         const logs = await driver.manage().logs().get('browser');
         const severe = logs.filter((l) => l.level.name === 'SEVERE');
@@ -165,10 +165,10 @@ async function main() {
 
         // ============================================================
         console.log('\n\x1b[1m[2] Render optimisation (merged meshes)\x1b[0m');
-        check('one merged mesh per material×categoria (48)', i.meshParts === 48, 'got ' + i.meshParts);
+        check('one merged mesh per material×categoria (47)', i.meshParts === 47, 'got ' + i.meshParts);
         check('draw calls collapsed to < 60', i.drawCalls > 0 && i.drawCalls < 60,
             i.drawCalls + ' draw calls (was ~2536 with InstancedMesh)');
-        check('all 153,732 triangles submitted', i.triangles === 153732, 'got ' + i.triangles);
+        check('all 156,508 triangles submitted (ventanas sin decimar)', i.triangles === 156508, 'got ' + i.triangles);
         check('all elements visible at full extent', i.visible === 2635, 'got ' + i.visible);
 
         // Render-on-demand: a still scene must cost zero frames. This is
@@ -222,8 +222,14 @@ async function main() {
             'camera shifted ' + jerk.toFixed(3) + ' units');
         await driver.manage().window().setRect({ width: 1440, height: 900 });
         await sleep(400);
+        // The panel starts collapsed everywhere now: expand it to reach the
+        // Reiniciar button, then collapse it back.
+        await driver.findElement(By.css('#ui-toggle')).click();
+        await sleep(250);
         await driver.findElement(By.css('#btn-reset')).click();
         await sleep(500);
+        await driver.findElement(By.css('#ui-toggle')).click();
+        await sleep(250);
 
         // ============================================================
         console.log('\n\x1b[1m[4] Minimap actually paints a plan view\x1b[0m');
@@ -251,8 +257,9 @@ async function main() {
             'const cb = arguments[0]; window.__viewer.sampleMinimap().then(cb);');
         check('marker survives camera movement', map.redPixels > 20,
             redBefore + ' -> ' + map.redPixels + ' red px');
-        await driver.executeScript('window.__viewer.resetBox();');
-        await driver.findElement(By.css('#btn-reset')).click();
+        // Same as the Reiniciar button (already exercised in [3]), via API
+        // because the collapsed panel hides the button.
+        await driver.executeScript('window.__viewer.resetBox(); window.__viewer.fitCamera();');
         await sleep(500);
 
         // ============================================================
@@ -289,8 +296,10 @@ async function main() {
         const infoRect = await rect(driver, '#info-panel');
         check('properties panel is shown', !!infoRect);
         check('properties panel does not overlap the controls', !overlaps(await rect(driver, '#ui-panel'), infoRect));
-        const guid = await driver.executeScript(
-            'return document.querySelectorAll("#info-content .info-val")[6].textContent;');
+        const guid = await driver.executeScript(`
+            const vals = [...document.querySelectorAll('#info-content .info-val')].map((e) => e.textContent);
+            return vals.find((t) => /^[0-9a-f-]{45}$/.test(t)) || vals.join('|');
+        `);
         check('panel shows a 45-char GUID', guid.length === 45, guid);
         await shot(driver, '03_desktop_selection');
 
@@ -474,11 +483,22 @@ async function main() {
         check('1080p: joystick y botones de subir/bajar visibles', i.joystickVisible === true);
         check('1080p: boton de colapso visible',
             (await rect(driver, '#ui-toggle')) !== null);
+        // Colapsado: el botón cuadrado ES la esquina superior izquierda.
+        const togC = await rect(driver, '#ui-toggle');
+        check('colapsado por defecto: boton cuadrado simple arriba a la izquierda',
+            togC && Math.abs(togC.w - togC.h) < 2 && togC.l < 90 && togC.t < 90 &&
+            (await driver.executeScript('return document.getElementById("ui-toggle").textContent.trim().length <= 2;')),
+            togC ? togC.w + 'x' + togC.h + ' @ ' + togC.l.toFixed(0) + ',' + togC.t.toFixed(0) : '-');
+        // Expandido: el botón sigue en la esquina izquierda del encabezado.
+        await driver.findElement(By.css('#ui-toggle')).click();
+        await sleep(250);
         const headD = await rect(driver, '.panel-head');
         const togD = await rect(driver, '#ui-toggle');
         check('1080p: el boton esta en la esquina superior izquierda del panel',
             togD && headD && (togD.l - headD.l) < (headD.r - togD.r),
             togD && headD ? 'offsetIzq=' + (togD.l - headD.l).toFixed(0) + ' offsetDer=' + (headD.r - togD.r).toFixed(0) : '-');
+        await driver.findElement(By.css('#ui-toggle')).click();
+        await sleep(250);
 
         // Collapse and expand from desktop. Earlier sections may have left
         // the panel in either state, so assert the toggle flips it both ways.
@@ -656,8 +676,8 @@ async function main() {
         await sleep(150);
 
         // ============================================================
-        console.log('\n\x1b[1m[16] Cotas: 2 puntos y multidireccional\x1b[0m');
-        // Walk into a room first: the multiray tool is meant to size rooms.
+        console.log('\n\x1b[1m[16] Cotas: manual contigua (con area) y espacial\x1b[0m');
+        // Walk into a room first: these tools are meant to size rooms.
         await driver.executeScript(`
             const W = window.innerWidth, H = window.innerHeight;
             for (let fy = 0.55; fy <= 0.92; fy += 0.04)
@@ -665,6 +685,8 @@ async function main() {
                     if (window.__viewer.probeFloor(fx*W, fy*H)) { window.__viewer.walkTo(fx*W, fy*H, false); return; }
         `);
         await sleep(1400);
+        i = await info(driver);
+        check('al aterrizar en el piso el modo pasa a walk (mirar)', i.navMode === 'walk');
 
         // Inside the building the minimap zooms to room scale: the cut walls
         // must now be plainly readable (this was the user's top priority).
@@ -674,10 +696,12 @@ async function main() {
             mapRoom.dark > 0.015 && mapRoom.gray > 0.20,
             (mapRoom.dark * 100).toFixed(1) + '% muros, ' + (mapRoom.gray * 100).toFixed(1) + '% piso');
 
-        // Two-point mode through the real button + real clicks.
+        // Manual chain through the real button + real clicks.
         await driver.findElement(By.css('#tool-measure')).click();
         i = await info(driver);
-        check('el boton activa el modo 2 puntos', i.measureMode === 'two');
+        check('el boton activa la cota manual contigua', i.measureMode === 'chain');
+        check('aparece el boton de restablecer cota',
+            await driver.executeScript('return document.getElementById("tool-measure-reset").offsetParent !== null;'));
         {
             const canvas = await driver.findElement(By.css('#canvas-container canvas'));
             const cw = await driver.executeScript('return [window.innerWidth, window.innerHeight];');
@@ -689,7 +713,7 @@ async function main() {
         }
         await sleep(400);
         i = await info(driver);
-        check('dos clicks crean una cota', i.dimCount === 1, i.dimCount + ' cotas: ' + JSON.stringify(i.dimLabels));
+        check('dos clicks crean el primer tramo', i.dimCount === 1, i.dimCount + ' cotas: ' + JSON.stringify(i.dimLabels));
         check('la cota tiene formato N,NN m', i.dimLabels.some((t) => /^\d+,\d{2} m$/.test(t)),
             JSON.stringify(i.dimLabels));
         const labelVisible = await driver.executeScript(`
@@ -697,18 +721,31 @@ async function main() {
             return els.some((el) => el.offsetParent !== null && /m$/.test(el.textContent));
         `);
         check('el numero de la cota es visible en pantalla (DOM)', labelVisible === true);
-        await shot(driver, '13_cota_2_puntos');
 
-        // Toggling the tool off clears its dimensions.
+        // Third contiguous point closes the polygon and reports the AREA.
+        await driver.executeScript('window.__viewer.measureClick(window.innerWidth * 0.5, window.innerHeight * 0.62);');
+        await sleep(400);
+        i = await info(driver);
+        check('el tercer punto encadena otro tramo', i.dimCount === 2, i.dimCount + ' tramos');
+        check('con 3 puntos aparece el AREA en m²', /m²$/.test(i.areaLabel || ''), 'area = ' + i.areaLabel);
+        await shot(driver, '13_cota_manual_area');
+
+        // The reset button clears the drawing but keeps the tool armed.
+        await driver.findElement(By.css('#tool-measure-reset')).click();
+        await sleep(200);
+        i = await info(driver);
+        check('restablecer cota limpia y deja la herramienta activa',
+            i.dimCount === 0 && i.chainPoints === 0 && i.measureMode === 'chain');
+
+        // Toggling the tool off clears everything.
         await driver.findElement(By.css('#tool-measure')).click();
         i = await info(driver);
         check('apagar la herramienta limpia las cotas', i.measureMode === 'none' && i.dimCount === 0);
 
-        // Multidirectional: one click inside the room, expect >= 3 rays with
-        // a ceiling-height (or room width) sized dimension among them.
+        // Spatial: one click fires all rays; simple, one measurement at a time.
         await driver.findElement(By.css('#tool-rays')).click();
         i = await info(driver);
-        check('el boton activa el modo multidireccional', i.measureMode === 'rays');
+        check('el boton activa la cota espacial', i.measureMode === 'rays');
         await driver.executeScript('window.__viewer.measureClick(window.innerWidth * 0.5, window.innerHeight * 0.62);');
         await sleep(400);
         i = await info(driver);
@@ -719,10 +756,24 @@ async function main() {
             .filter((v) => isFinite(v));
         check('alguna cota tiene tamaño de habitacion (1.8 a 8 m)',
             metros.some((v) => v >= 1.8 && v <= 8), JSON.stringify(metros));
-        await shot(driver, '14_cota_multidireccional');
+
+        // A second click REPLACES the previous measurement (one at a time).
+        const firstCount = i.dimCount;
+        await driver.executeScript('window.__viewer.measureClick(window.innerWidth * 0.45, window.innerHeight * 0.7);');
+        await sleep(300);
+        i = await info(driver);
+        check('la cota espacial es una sola a la vez (no acumula)',
+            i.dimCount <= firstCount + 1, firstCount + ' -> ' + i.dimCount);
+        await shot(driver, '14_cota_espacial');
         await driver.findElement(By.css('#tool-rays')).click();
         i = await info(driver);
-        check('apagar multidireccional limpia todo', i.measureMode === 'none' && i.dimCount === 0);
+        check('apagar la espacial limpia todo', i.measureMode === 'none' && i.dimCount === 0);
+
+        // Volver a vista general: el modo debe regresar a orbitar.
+        await driver.executeScript('window.__viewer.fitCamera();');
+        await sleep(300);
+        i = await info(driver);
+        check('al encuadrar el edificio vuelve el modo orbitar', i.navMode === 'orbit');
 
         // ============================================================
         console.log('\n\x1b[1m[17] Giroscopio + calibrar norte\x1b[0m');
@@ -757,7 +808,71 @@ async function main() {
         check('sin errores tras usar todas las herramientas', i.errors.length === 0, i.errors.join(' | ') || 'none');
 
         // ============================================================
-        console.log('\n\x1b[1m[18] Carga local por file:// (doble click al archivo)\x1b[0m');
+        console.log('\n\x1b[1m[18] Cartilla del elemento: aislar y restablecer\x1b[0m');
+        // Re-frame first: the gyro left the camera aimed at open sky.
+        await driver.executeScript('window.__viewer.fitCamera();');
+        await sleep(400);
+        await driver.executeScript('window.__viewer.pickCenter();');
+        await sleep(500);
+        i = await info(driver);
+        check('seleccionar muestra la cartilla con botones', i.selected !== null &&
+            await driver.executeScript('return !!document.getElementById("info-isolate") && !!document.getElementById("info-reset-filter");'));
+        const selCat = await driver.executeScript('return window.__viewer.info().selected !== null ? window.__viewer.info().categories.length : 0;');
+        await driver.findElement(By.css('#info-isolate')).click();
+        await sleep(300);
+        i = await info(driver);
+        check('"Aislar categoria" desde la cartilla activa el filtro',
+            i.filterActive === true && i.categories.filter((c) => c.on).length === 1,
+            i.visible + ' visibles, cats on: ' + i.categories.filter((c) => c.on).map((c) => c.name).join(','));
+        await shot(driver, '15_cartilla_aislar');
+        await driver.findElement(By.css('#info-reset-filter')).click();
+        await sleep(300);
+        i = await info(driver);
+        check('"Restablecer filtros" desde la cartilla devuelve todo',
+            i.filterActive === false && i.visible === 2635);
+        await driver.executeScript('window.__viewer.closeInfo();');
+        await sleep(300);
+
+        // ============================================================
+        console.log('\n\x1b[1m[19] API pública: LeerBinario / CargarBinario / LimpiarTodo + caché\x1b[0m');
+        check('la API pública está expuesta en window', (await driver.executeScript(
+            'return [typeof window.LeerBinario, typeof window.CargarBinario, typeof window.LimpiarTodo, typeof window.CargarDesdeUrl].every((t) => t === "function");')) === true);
+
+        const cacheKeys = await driver.executeAsyncScript(`
+            const cb = arguments[0];
+            const req = indexedDB.open('mip-tbv', 1);
+            req.onsuccess = () => {
+                try {
+                    const tx = req.result.transaction('modelos').objectStore('modelos').getAllKeys();
+                    tx.onsuccess = () => cb(tx.result);
+                    tx.onerror = () => cb([]);
+                } catch (e) { cb([]); }
+            };
+            req.onerror = () => cb([]);
+        `);
+        check('el binario queda cacheado en IndexedDB', cacheKeys.length >= 1, JSON.stringify(cacheKeys));
+
+        await driver.executeScript('window.LimpiarTodo();');
+        await sleep(500);
+        i = await info(driver);
+        check('LimpiarTodo descarga el modelo y muestra el dropzone',
+            i.ready === false && i.instances === 0 &&
+            await driver.executeScript('return document.getElementById("dropzone").classList.contains("show");'));
+        await shot(driver, '16_limpiar_todo');
+
+        await driver.executeScript(`
+            const b64 = document.getElementById('embedded-tbv').textContent.trim();
+            const DataDeGeometria = window.LeerBinario(b64);
+            window.CargarBinario(DataDeGeometria);
+        `);
+        await waitReady(driver, 30000);
+        i = await info(driver);
+        check('CargarBinario(LeerBinario(base64)) rearma toda la escena',
+            i.ready === true && i.instances === 2635 && i.errors.length === 0,
+            i.instances + ' instancias');
+
+        // ============================================================
+        console.log('\n\x1b[1m[20] Carga local por file:// (doble click al archivo)\x1b[0m');
         await driver.manage().logs().get('browser'); // drain the http session's logs
         await driver.get('file:///' + path.join(ROOT, 'index.html').replace(/\\/g, '/'));
         await waitReady(driver);
@@ -772,7 +887,7 @@ async function main() {
             unsafe.map((l) => l.message).slice(0, 2).join(' | ') || 'limpio');
 
         // ============================================================
-        console.log('\n\x1b[1m[19] Final error sweep\x1b[0m');
+        console.log('\n\x1b[1m[21] Final error sweep\x1b[0m');
         const finalLogs = fileLogs.filter((l) => l.level.name === 'SEVERE')
             .filter((l) => !/GPU stall|swiftshader/i.test(l.message));
         check('still no SEVERE console entries', finalLogs.length === 0,

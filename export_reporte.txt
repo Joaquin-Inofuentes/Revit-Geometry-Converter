@@ -3,20 +3,20 @@
 Formato de entrada:     v3
 Mallas de entrada:      34769
 Piezas de salida:       2635 (descartadas vacías: 0)
-Vértices:  264.070 -> soldados 108.357 -> finales 81.975  (31,0% del original)
-Triángulos: 206.648 -> finales 153.732  (74,4% del original)
+Vértices:  264.070 -> soldados 108.357 -> finales 83.320  (31,6% del original)
+Triángulos: 206.648 -> finales 156.508  (75,7% del original)
 Triángulos degenerados eliminados: 60
-Piezas chicas sin decimar (cubos/prismas protegidos): 241
-Piezas intactas por categoría protegida (muros/suelos/techos): 1785
+Piezas chicas sin decimar (cubos/prismas protegidos): 213
+Piezas intactas por categoría protegida (muros/suelos/techos): 1915
 Piezas con reintento conservador:  0
-Piezas con fallback (sin decimar): 13
+Piezas con fallback (sin decimar): 2
 Piezas rotas detectadas y REPARADAS con geometría original: 0
 Materiales transparentes (vidrio): 1
-Piezas instanciadas (malla compartida): 99
-Geometrías únicas en el .tbv (dedup): 2536 de 2635 piezas
-Binario de visor (.tbv): 2.269 KB
-OBJ: 11.596 KB   GLB: 4.796 KB
-Tiempo total: 2,5 s
+Piezas instanciadas (malla compartida): 100
+Geometrías únicas en el .tbv (dedup): 2535 de 2635 piezas
+Binario de visor (.tbv): 2.298 KB
+OBJ: 11.797 KB   GLB: 4.835 KB
+Tiempo total: 2,3 s
 ====================================
 
 VALIDACIÓN FINAL: OK — ninguna pieza rota en la salida.
