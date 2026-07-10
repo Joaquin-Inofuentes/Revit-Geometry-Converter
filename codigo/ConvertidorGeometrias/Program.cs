@@ -16,6 +16,7 @@ namespace ConvertidorGeometrias
         public string Guid;
         public int MaterialId;
         public List<Vector3> Vertices = new List<Vector3>();
+        public List<Vector3> Normals = new List<Vector3>();
         public List<int> Indices = new List<int>();
     }
 
@@ -40,8 +41,8 @@ namespace ConvertidorGeometrias
             Console.WriteLine($"Se leyeron {meshes.Count} mallas originales del archivo.");
 
             Console.WriteLine("Agrupando y diezmando (decimating) geometría...");
-            // Voxel de 0.02f (2cm) para no derretir detalles como marcos de ventanas ni solapar muros
-            List<MeshData> optimizedMeshes = OptimizeMeshes(meshes, 0.02f); 
+            // Decimado avanzado con Quadric Error Metrics (QEM)
+            List<MeshData> optimizedMeshes = OptimizeMeshes(meshes);  
             Console.WriteLine($"Geometría reducida a {optimizedMeshes.Count} piezas separadas.");
 
             string directory = Path.GetDirectoryName(filePath);
@@ -61,7 +62,7 @@ namespace ConvertidorGeometrias
             Console.ReadLine(); // Pausa
         }
 
-        static List<MeshData> OptimizeMeshes(List<MeshData> inputMeshes, float voxelSize)
+        static List<MeshData> OptimizeMeshes(List<MeshData> inputMeshes)
         {
             // El usuario solicitó mantener las piezas separadas.
             // Agrupamos por Guid (Elemento de Revit) en lugar de MaterialId
@@ -72,7 +73,6 @@ namespace ConvertidorGeometrias
             {
                 var mergedMesh = new MeshData();
                 mergedMesh.Guid = group.Key;
-                // Asumimos el MaterialId de la primera malla del grupo (usualmente el elemento tiene 1 material predominante)
                 mergedMesh.MaterialId = group.First().MaterialId;
 
                 // Unir todas las caras de este elemento
@@ -87,13 +87,85 @@ namespace ConvertidorGeometrias
                     vertexOffset += mesh.Vertices.Count;
                 }
                 
-                // Decimar (simplificar) la pieza con el tamaño de grilla para eliminar vértices duplicados y triángulos minúsculos
-                var decimated = VertexClusteringDecimator.Decimate(mergedMesh, voxelSize);
-                
-                // Solo agregar si quedaron triángulos válidos
-                if (decimated.Indices.Count >= 3)
+                int originalTriangles = mergedMesh.Indices.Count / 3;
+                if (originalTriangles < 2) continue;
+
+                // Preparar datos para QEM MeshDecimator
+                var mdVertices = new MeshDecimator.Math.Vector3d[mergedMesh.Vertices.Count];
+                for (int i = 0; i < mergedMesh.Vertices.Count; i++)
                 {
-                    optimizedList.Add(decimated);
+                    mdVertices[i] = new MeshDecimator.Math.Vector3d(
+                        mergedMesh.Vertices[i].X,
+                        mergedMesh.Vertices[i].Y,
+                        mergedMesh.Vertices[i].Z
+                    );
+                }
+                var mdIndices = mergedMesh.Indices.ToArray();
+
+                var srcMesh = new MeshDecimator.Mesh(mdVertices, mdIndices);
+
+                // Cálculo dinámico del target:
+                // Tazas/picaportes tendrán miles de triángulos, podemos diezmarlos al 5% o 10%
+                // Muros planos tendrán menos, podemos dejarlos al 20% o 50%
+                int targetTriangles = originalTriangles;
+                if (originalTriangles > 1000) targetTriangles = (int)(originalTriangles * 0.10); // 10%
+                else if (originalTriangles > 200) targetTriangles = (int)(originalTriangles * 0.20); // 20%
+                else if (originalTriangles > 50) targetTriangles = (int)(originalTriangles * 0.40); // 40%
+                else targetTriangles = Math.Max((int)(originalTriangles * 0.60), 2); // 60%, minimo 2
+
+                var decimatedMdMesh = MeshDecimator.MeshDecimation.DecimateMesh(
+                    MeshDecimator.Algorithm.FastQuadricMesh, 
+                    srcMesh, 
+                    targetTriangles
+                );
+
+                // Reconstruir MeshData de salida
+                var outMesh = new MeshData
+                {
+                    Guid = mergedMesh.Guid,
+                    MaterialId = mergedMesh.MaterialId
+                };
+                
+                foreach (var v in decimatedMdMesh.Vertices)
+                {
+                    outMesh.Vertices.Add(new Vector3((float)v.x, (float)v.y, (float)v.z));
+                }
+                outMesh.Indices.AddRange(decimatedMdMesh.Indices);
+                
+                // Calculate smooth/flat normals
+                outMesh.Normals = new List<Vector3>(new Vector3[outMesh.Vertices.Count]);
+                var normalCounts = new int[outMesh.Vertices.Count];
+
+                for (int i = 0; i < outMesh.Indices.Count; i += 3)
+                {
+                    int i0 = outMesh.Indices[i];
+                    int i1 = outMesh.Indices[i + 1];
+                    int i2 = outMesh.Indices[i + 2];
+
+                    Vector3 v0 = outMesh.Vertices[i0];
+                    Vector3 v1 = outMesh.Vertices[i1];
+                    Vector3 v2 = outMesh.Vertices[i2];
+
+                    Vector3 normal = Vector3.Normalize(Vector3.Cross(v1 - v0, v2 - v0));
+
+                    outMesh.Normals[i0] += normal;
+                    outMesh.Normals[i1] += normal;
+                    outMesh.Normals[i2] += normal;
+                    
+                    normalCounts[i0]++;
+                    normalCounts[i1]++;
+                    normalCounts[i2]++;
+                }
+
+                for (int i = 0; i < outMesh.Normals.Count; i++)
+                {
+                    if (normalCounts[i] > 0)
+                        outMesh.Normals[i] = Vector3.Normalize(outMesh.Normals[i] / normalCounts[i]);
+                }
+
+                if (outMesh.Indices.Count >= 3)
+                {
+                    optimizedList.Add(outMesh);
                 }
             }
 
@@ -149,11 +221,14 @@ namespace ConvertidorGeometrias
                 writer.WriteLine("# Exportado desde ConvertidorGeometrias");
                 
                 int vertexOffset = 1;
+                int normalOffset = 1;
+
                 foreach (var mesh in meshes)
                 {
                     writer.WriteLine($"o {mesh.Guid}");
                     writer.WriteLine($"usemtl {mesh.Guid}");
 
+                    // Vertices
                     foreach (var v in mesh.Vertices)
                     {
                         string x = v.X.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -161,16 +236,42 @@ namespace ConvertidorGeometrias
                         string z = v.Z.ToString(System.Globalization.CultureInfo.InvariantCulture);
                         writer.WriteLine($"v {x} {y} {z}");
                     }
+                    
+                    // Normals
+                    bool hasNormals = mesh.Normals != null && mesh.Normals.Count == mesh.Vertices.Count;
+                    if (hasNormals)
+                    {
+                        foreach (var vn in mesh.Normals)
+                        {
+                            string nx = vn.X.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                            string ny = vn.Y.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                            string nz = vn.Z.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                            writer.WriteLine($"vn {nx} {ny} {nz}");
+                        }
+                    }
 
+                    // Faces
                     for (int i = 0; i < mesh.Indices.Count; i += 3)
                     {
                         int i0 = mesh.Indices[i] + vertexOffset;
                         int i1 = mesh.Indices[i + 1] + vertexOffset;
                         int i2 = mesh.Indices[i + 2] + vertexOffset;
-                        writer.WriteLine($"f {i0} {i1} {i2}");
+
+                        if (hasNormals)
+                        {
+                            int n0 = mesh.Indices[i] + normalOffset;
+                            int n1 = mesh.Indices[i + 1] + normalOffset;
+                            int n2 = mesh.Indices[i + 2] + normalOffset;
+                            writer.WriteLine($"f {i0}//{n0} {i1}//{n1} {i2}//{n2}");
+                        }
+                        else
+                        {
+                            writer.WriteLine($"f {i0} {i1} {i2}");
+                        }
                     }
 
                     vertexOffset += mesh.Vertices.Count;
+                    if (hasNormals) normalOffset += mesh.Normals.Count;
                 }
             }
         }
@@ -199,23 +300,46 @@ namespace ConvertidorGeometrias
                     materials[meshData.MaterialId] = material;
                 }
 
-                var meshBuilder = new MeshBuilder<VertexPosition, VertexEmpty, VertexEmpty>(meshData.Guid);
-                var prim = meshBuilder.UsePrimitive(material);
+                bool hasNormals = meshData.Normals != null && meshData.Normals.Count == meshData.Vertices.Count;
 
-                for (int i = 0; i < meshData.Indices.Count; i += 3)
+                if (hasNormals)
                 {
-                    var v0 = meshData.Vertices[meshData.Indices[i]];
-                    var v1 = meshData.Vertices[meshData.Indices[i + 1]];
-                    var v2 = meshData.Vertices[meshData.Indices[i + 2]];
+                    var meshBuilder = new MeshBuilder<VertexPositionNormal, VertexEmpty, VertexEmpty>(meshData.Guid);
+                    var prim = meshBuilder.UsePrimitive(material);
 
-                    prim.AddTriangle(
-                        new VertexPosition(v0),
-                        new VertexPosition(v1),
-                        new VertexPosition(v2)
-                    );
+                    for (int i = 0; i < meshData.Indices.Count; i += 3)
+                    {
+                        var i0 = meshData.Indices[i];
+                        var i1 = meshData.Indices[i + 1];
+                        var i2 = meshData.Indices[i + 2];
+
+                        prim.AddTriangle(
+                            new VertexPositionNormal(meshData.Vertices[i0], meshData.Normals[i0]),
+                            new VertexPositionNormal(meshData.Vertices[i1], meshData.Normals[i1]),
+                            new VertexPositionNormal(meshData.Vertices[i2], meshData.Normals[i2])
+                        );
+                    }
+                    scene.AddRigidMesh(meshBuilder, Matrix4x4.Identity);
                 }
+                else
+                {
+                    var meshBuilder = new MeshBuilder<VertexPosition, VertexEmpty, VertexEmpty>(meshData.Guid);
+                    var prim = meshBuilder.UsePrimitive(material);
 
-                scene.AddRigidMesh(meshBuilder, Matrix4x4.Identity);
+                    for (int i = 0; i < meshData.Indices.Count; i += 3)
+                    {
+                        var i0 = meshData.Indices[i];
+                        var i1 = meshData.Indices[i + 1];
+                        var i2 = meshData.Indices[i + 2];
+
+                        prim.AddTriangle(
+                            new VertexPosition(meshData.Vertices[i0]),
+                            new VertexPosition(meshData.Vertices[i1]),
+                            new VertexPosition(meshData.Vertices[i2])
+                        );
+                    }
+                    scene.AddRigidMesh(meshBuilder, Matrix4x4.Identity);
+                }
             }
 
             var model = scene.ToGltf2();
