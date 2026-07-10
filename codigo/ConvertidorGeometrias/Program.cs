@@ -936,6 +936,23 @@ namespace ConvertidorGeometrias
             }
 
             var model = scene.ToGltf2();
+
+            // Extras por nodo: cada pieza lleva su ElementId, CategoryId y MaterialId de Revit
+            // además del GUID (nombre del nodo) y el color/alpha (material).
+            var porGuid = new Dictionary<string, MeshData>();
+            foreach (var m in meshes)
+            {
+                if (!porGuid.ContainsKey(m.Guid)) porGuid[m.Guid] = m;
+            }
+            foreach (var node in model.LogicalNodes)
+            {
+                if (node.Name != null && porGuid.TryGetValue(node.Name, out var md))
+                {
+                    node.Extras = System.Text.Json.Nodes.JsonNode.Parse(
+                        $"{{\"elementId\":{md.ElementId},\"categoryId\":{md.CategoryId},\"materialId\":{md.MaterialId}}}");
+                }
+            }
+
             model.SaveGLB(outputPath);
         }
 

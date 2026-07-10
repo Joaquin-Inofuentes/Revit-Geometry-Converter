@@ -154,7 +154,22 @@ public static class ExportarGeometria
                 b = col.Blue;
             }
 
+            // 1) Transparencia de la pestaña Gráficos
             int t = mat.Transparency; // 0 (opaco) .. 100 (invisible)
+
+            // 2) Muchos vidrios tienen la transparencia SOLO en la pestaña Apariencia
+            //    (render) y Gráficos en 0: leer el Appearance Asset como respaldo.
+            if (t <= 0) t = TransparenciaDesdeApariencia(doc, mat);
+
+            // 3) Red final: materiales que por nombre/clase son vidrio pero no declaran
+            //    transparencia en ningún lado.
+            bool esVidrio = EsNombreDeVidrio(mat);
+            if (t <= 0 && esVidrio) t = 60;
+
+            // Un vidrio con color gráfico negro (sin definir) se vería como ventana negra:
+            // usar un tinte de vidrio neutro.
+            if (esVidrio && (r + g + b) < 90) { r = 170; g = 200; b = 210; }
+
             if (t > 0)
             {
                 int alpha = (int)Math.Round(255.0 * (100 - t) / 100.0);
@@ -169,6 +184,45 @@ public static class ExportarGeometria
         // categoría varía según el elemento y no debe quedar pegado a un MaterialId).
         if (key >= 0 && esDelMaterial) cache[key] = rgba;
         return rgba;
+    }
+
+    /// <summary>
+    /// Transparencia (0-100) leída del Appearance Asset (pestaña Apariencia) del material.
+    /// Cubre el caso típico: vidrios con Gráficos opaco pero apariencia de render translúcida.
+    /// </summary>
+    private static int TransparenciaDesdeApariencia(Document doc, Material mat)
+    {
+        try
+        {
+            if (mat.AppearanceAssetId == null || mat.AppearanceAssetId == ElementId.InvalidElementId) return 0;
+            AppearanceAssetElement aae = doc.GetElement(mat.AppearanceAssetId) as AppearanceAssetElement;
+            if (aae == null) return 0;
+            Asset asset = aae.GetRenderingAsset();
+            if (asset == null) return 0;
+
+            // Esquema "Generic": transparencia directa 0..1
+            AssetPropertyDouble p = asset.FindByName("generic_transparency") as AssetPropertyDouble;
+            if (p != null && p.Value > 0.01) return (int)Math.Round(p.Value * 100);
+
+            // Esquemas de vidrio (Glazing / SolidGlass): son vidrio por definición
+            AssetPropertyString schema = asset.FindByName("BaseSchema") as AssetPropertyString;
+            if (schema != null && (schema.Value == "GlazingSchema" || schema.Value == "SolidGlassSchema"))
+            {
+                return 70;
+            }
+        }
+        catch
+        {
+            // Assets corruptos o de esquemas exóticos: seguir con las otras heurísticas
+        }
+        return 0;
+    }
+
+    private static bool EsNombreDeVidrio(Material mat)
+    {
+        string s = ((mat.Name ?? "") + "|" + (mat.MaterialClass ?? "")).ToLowerInvariant();
+        return s.Contains("vidrio") || s.Contains("glass") || s.Contains("cristal") ||
+               s.Contains("glazing") || s.Contains("transparen");
     }
 
     /// <summary>

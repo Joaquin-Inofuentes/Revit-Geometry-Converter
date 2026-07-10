@@ -13,7 +13,7 @@ Piezas con fallback (sin decimar): 13
 Piezas rotas detectadas y REPARADAS con geometría original: 0
 Materiales transparentes (vidrio): 1
 Piezas instanciadas (malla compartida): 99
-OBJ: 11.596 KB   GLB: 4.612 KB
+OBJ: 11.596 KB   GLB: 4.796 KB
 Tiempo total: 1,5 s
 ====================================
 
