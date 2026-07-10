@@ -43,6 +43,8 @@ namespace ConvertidorGeometrias
         public int Transparent;    // materiales con alpha (vidrios)
         public int Instanced;      // piezas que reusan la malla de otra idéntica (GLB más chico)
         public int Repaired;       // piezas rotas reparadas restaurando su geometría original
+        public int PoolMeshes;     // geometrías únicas en el .tbv tras deduplicar
+        public long TbvBytes;      // tamaño del binario de visor
     }
 
     public class PiezaRota
@@ -142,6 +144,10 @@ namespace ConvertidorGeometrias
             Console.WriteLine($"Exportando a GLB: {glbPath}");
             ExportToGlb(optimizedMeshes, glbPath, stats);
 
+            string tbvPath = Path.Combine(directory, baseName + ".tbv");
+            Console.WriteLine($"Exportando binario de visor (dedup + índice espacial): {tbvPath}");
+            ExportToViewerBin(optimizedMeshes, tbvPath, stats);
+
             string reportPath = Path.Combine(directory, baseName + "_reporte.txt");
 
             sw.Stop();
@@ -172,6 +178,8 @@ namespace ConvertidorGeometrias
             sb.AppendLine($"Piezas rotas detectadas y REPARADAS con geometría original: {s.Repaired}");
             sb.AppendLine($"Materiales transparentes (vidrio): {s.Transparent}");
             sb.AppendLine($"Piezas instanciadas (malla compartida): {s.Instanced}");
+            sb.AppendLine($"Geometrías únicas en el .tbv (dedup): {s.PoolMeshes} de {s.OutputPieces} piezas");
+            if (s.TbvBytes > 0) sb.AppendLine($"Binario de visor (.tbv): {s.TbvBytes / 1024:N0} KB");
             sb.AppendLine($"OBJ: {new FileInfo(objPath).Length / 1024:N0} KB   GLB: {new FileInfo(glbPath).Length / 1024:N0} KB");
             sb.AppendLine($"Tiempo total: {elapsed.TotalSeconds:F1} s");
             sb.AppendLine("====================================");
@@ -998,6 +1006,184 @@ namespace ConvertidorGeometrias
                 if (Math.Abs(d.X) > eps || Math.Abs(d.Y) > eps || Math.Abs(d.Z) > eps) return false;
             }
             return true;
+        }
+
+        // ================== BINARIO DE VISOR (.tbv) ==================
+        // Formato "TBTV" ultra-optimizado para el visor web:
+        //   - Deduplicación: la geometría repetida (ventanas, muebles, columnas iguales) se
+        //     escribe UNA vez en un pool; cada pieza es una instancia que apunta al pool con
+        //     una traslación. Enorme ahorro de bytes y de RAM/GPU en el visor.
+        //   - Índice espacial: cada instancia guarda su AABB GLOBAL precalculado, para que el
+        //     visor pueda cull-ear por "cubo visible" leyendo solo esos 6 floats (sin tocar
+        //     la geometría) y para búsquedas por posición global.
+        //   - Búsqueda por ID/GUID: cada instancia trae ElementId, CategoryId, MaterialId y GUID.
+        //   - Compacto: normales en int8 (snorm), índices uint16 cuando se puede.
+        //
+        // Layout (little-endian):
+        //   Header: int32 magic('TBTV'=0x56544254), int32 version(1),
+        //           int32 matCount, int32 meshCount, int32 instCount,
+        //           float32 sceneMin[3], float32 sceneMax[3]
+        //   Materiales × matCount: int32 materialId, uint8 R,G,B,A
+        //   Meshes (pool) × meshCount:
+        //           int32 vertexCount, uint8 idx16(1/0), int32 triCount,
+        //           float32 positions[vc*3], int8 normals[vc*3],
+        //           (idx16? uint16 : uint32) indices[triCount*3]
+        //   Instancias × instCount:
+        //           int32 meshIndex, int32 elementId, int32 categoryId, int32 materialIndex,
+        //           float32 tx,ty,tz, float32 gmin[3], float32 gmax[3],
+        //           uint16 guidLen, byte[guidLen] guid(UTF8)
+        static void ExportToViewerBin(List<MeshData> meshes, string path, PipelineStats stats)
+        {
+            const int MAGIC = 0x56544254; // "TBTV"
+            const int VERSION = 1;
+
+            // Tabla de materiales: un color por MaterialId
+            var matIndexById = new Dictionary<int, int>();
+            var matReps = new List<MeshData>();
+            foreach (var m in meshes)
+            {
+                if (!matIndexById.ContainsKey(m.MaterialId))
+                {
+                    matIndexById[m.MaterialId] = matReps.Count;
+                    matReps.Add(m);
+                }
+            }
+
+            // Pool de geometría deduplicada + instancias (misma lógica que el instanciado del GLB)
+            var pool = new List<MeshData>();
+            var poolBounds = new List<(Vector3 min, Vector3 max)>();
+            var poolKey = new Dictionary<(int, int, int, long), List<int>>();
+            var instMeshIdx = new List<int>(meshes.Count);
+            var instDelta = new List<Vector3>(meshes.Count);
+
+            foreach (var m in meshes)
+            {
+                var key = (m.MaterialId, m.Vertices.Count, m.Indices.Count, GeometryHash(m));
+                if (!poolKey.TryGetValue(key, out var cand))
+                {
+                    cand = new List<int>();
+                    poolKey[key] = cand;
+                }
+
+                int found = -1;
+                Vector3 delta = Vector3.Zero;
+                foreach (var pi in cand)
+                {
+                    if (EsCopiaTrasladada(pool[pi], m, out delta)) { found = pi; break; }
+                }
+
+                if (found < 0)
+                {
+                    found = pool.Count;
+                    pool.Add(m);
+                    GetBounds(m.Vertices, out var mn, out var mx);
+                    poolBounds.Add((mn, mx));
+                    cand.Add(found);
+                    delta = Vector3.Zero;
+                }
+
+                instMeshIdx.Add(found);
+                instDelta.Add(delta);
+            }
+
+            stats.PoolMeshes = pool.Count;
+
+            // AABB de toda la escena (para encuadre inicial del visor)
+            Vector3 sMin = new Vector3(float.MaxValue), sMax = new Vector3(float.MinValue);
+            for (int i = 0; i < meshes.Count; i++)
+            {
+                var (mn, mx) = poolBounds[instMeshIdx[i]];
+                var d = instDelta[i];
+                sMin = Vector3.Min(sMin, mn + d);
+                sMax = Vector3.Max(sMax, mx + d);
+            }
+
+            var rndColors = new Random(42);
+            using (var fs = File.Create(path))
+            using (var w = new BinaryWriter(fs))
+            {
+                w.Write(MAGIC);
+                w.Write(VERSION);
+                w.Write(matReps.Count);
+                w.Write(pool.Count);
+                w.Write(meshes.Count);
+                w.Write(sMin.X); w.Write(sMin.Y); w.Write(sMin.Z);
+                w.Write(sMax.X); w.Write(sMax.Y); w.Write(sMax.Z);
+
+                // Materiales
+                foreach (var mr in matReps)
+                {
+                    w.Write(mr.MaterialId);
+                    if (mr.HasColor)
+                    {
+                        w.Write(mr.ColR); w.Write(mr.ColG); w.Write(mr.ColB); w.Write(mr.ColA);
+                    }
+                    else
+                    {
+                        byte r = (byte)(rndColors.Next(0, 180) + 60);
+                        byte g = (byte)(rndColors.Next(0, 180) + 60);
+                        byte b = (byte)(rndColors.Next(0, 180) + 60);
+                        w.Write(r); w.Write(g); w.Write(b); w.Write((byte)255);
+                    }
+                }
+
+                // Meshes del pool
+                foreach (var pm in pool)
+                {
+                    int vc = pm.Vertices.Count;
+                    int tc = pm.Indices.Count / 3;
+                    bool idx16 = vc <= 65535;
+
+                    w.Write(vc);
+                    w.Write((byte)(idx16 ? 1 : 0));
+                    w.Write(tc);
+
+                    for (int i = 0; i < vc; i++)
+                    {
+                        var v = pm.Vertices[i];
+                        w.Write(v.X); w.Write(v.Y); w.Write(v.Z);
+                    }
+                    for (int i = 0; i < vc; i++)
+                    {
+                        var n = i < pm.Normals.Count ? pm.Normals[i] : Vector3.UnitY;
+                        w.Write(Snorm(n.X)); w.Write(Snorm(n.Y)); w.Write(Snorm(n.Z));
+                    }
+                    if (idx16)
+                        foreach (var ix in pm.Indices) w.Write((ushort)ix);
+                    else
+                        foreach (var ix in pm.Indices) w.Write((uint)ix);
+                }
+
+                // Instancias
+                for (int i = 0; i < meshes.Count; i++)
+                {
+                    var m = meshes[i];
+                    var (mn, mx) = poolBounds[instMeshIdx[i]];
+                    var d = instDelta[i];
+                    var gmin = mn + d;
+                    var gmax = mx + d;
+
+                    w.Write(instMeshIdx[i]);
+                    w.Write(m.ElementId);
+                    w.Write(m.CategoryId);
+                    w.Write(matIndexById[m.MaterialId]);
+                    w.Write(d.X); w.Write(d.Y); w.Write(d.Z);
+                    w.Write(gmin.X); w.Write(gmin.Y); w.Write(gmin.Z);
+                    w.Write(gmax.X); w.Write(gmax.Y); w.Write(gmax.Z);
+
+                    var gb = Encoding.UTF8.GetBytes(m.Guid ?? "");
+                    w.Write((ushort)gb.Length);
+                    w.Write(gb);
+                }
+            }
+
+            stats.TbvBytes = new FileInfo(path).Length;
+        }
+
+        static sbyte Snorm(float f)
+        {
+            f = Math.Max(-1f, Math.Min(1f, f));
+            return (sbyte)Math.Round(f * 127f);
         }
     }
 }

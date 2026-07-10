@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TBV Ultra-Optimized Viewer Pro</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+
+        :root {
+            --bg-grad-start: #020617;
+            --bg-grad-end: #0f172a;
+            --panel-bg: rgba(15, 23, 42, 0.6);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --accent-hover: #60a5fa;
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: radial-gradient(circle at center, var(--bg-grad-end), var(--bg-grad-start));
+            font-family: 'Inter', sans-serif;
+            color: var(--text-main);
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none; /* Prevent browser pull-to-refresh */
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        .glass-panel {
+            position: absolute;
+            z-index: 10;
+            background: var(--panel-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+
+        #ui-panel { top: 24px; left: 24px; width: 300px; }
+        #info-panel { 
+            bottom: 24px; right: 24px; 
+            width: 280px; 
+            display: none; 
+            transform: translateY(20px);
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        #info-panel.show { transform: translateY(0); opacity: 1; }
+
+        h1 { margin: 0 0 4px 0; font-size: 22px; font-weight: 600; letter-spacing: -0.5px; }
+        .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
+        h2 { margin: 0 0 16px 0; font-size: 16px; font-weight: 600; color: var(--accent-hover); }
+
+        .file-upload {
+            border: 2px dashed rgba(255,255,255,0.15);
+            border-radius: 12px;
+            padding: 28px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+            display: block;
+            background: rgba(0,0,0,0.2);
+        }
+        .file-upload:hover { 
+            border-color: var(--accent); 
+            background: rgba(59, 130, 246, 0.05); 
+            transform: translateY(-2px);
+        }
+        #file-input { display: none; }
+
+        .section-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            font-weight: 600;
+            border-bottom: 1px solid var(--panel-border);
+            padding-bottom: 8px;
+        }
+
+        .control-group { margin-bottom: 16px; }
+        .control-group label { 
+            display: flex; 
+            justify-content: space-between;
+            margin-bottom: 8px; 
+            font-size: 13px; 
+            color: var(--text-main); 
+        }
+        .control-group .val { color: var(--accent-hover); font-variant-numeric: tabular-nums; }
+        
+        input[type="range"] {
+            width: 100%;
+            -webkit-appearance: none;
+            background: transparent;
+            margin-bottom: 4px;
+        }
+        input[type="range"]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
+            background: var(--accent); margin-top: -6px; cursor: pointer;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); transition: transform 0.1s;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+        .stats { 
+            font-size: 12px; color: var(--text-muted); margin-top: 24px; 
+            background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; line-height: 1.6;
+        }
+        .stats span { color: var(--text-main); font-weight: 500; }
+
+        /* Loader */
+        #loader {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: var(--bg-grad-end); z-index: 100;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: opacity 0.5s ease;
+        }
+        .spinner {
+            width: 56px; height: 56px; border: 4px solid rgba(255,255,255,0.1);
+            border-top-color: var(--accent); border-radius: 50%;
+            animation: spin 1s cubic-bezier(0.5, 0, 0.5, 1) infinite; margin-bottom: 24px;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        
+        .info-row {
+            display: flex; justify-content: space-between; margin-bottom: 8px;
+            font-size: 14px; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 4px;
+        }
+        .info-label { color: var(--text-muted); }
+        .info-val { font-weight: 500; user-select: text; }
+
+        /* Joystick & Mobile Controls */
+        #joystick-container {
+            display: none; position: absolute; bottom: 30px; left: 30px; 
+            width: 140px; height: 140px; background: rgba(255,255,255,0.05); 
+            border-radius: 50%; border: 2px solid rgba(255,255,255,0.1); 
+            z-index: 20; touch-action: none;
+            backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+        }
+        #joystick-knob {
+            position: absolute; top: 40px; left: 40px; width: 60px; height: 60px; 
+            background: var(--accent); border-radius: 50%; 
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.5); pointer-events: none;
+        }
+        #elev-controls {
+            display: none; position: absolute; bottom: 30px; right: 30px; 
+            flex-direction: column; gap: 16px; z-index: 20;
+        }
+        .elev-btn {
+            width: 60px; height: 60px; background: rgba(255,255,255,0.1); 
+            border: 2px solid rgba(255,255,255,0.2); border-radius: 50%; 
+            color: white; font-size: 24px; touch-action: none;
+            backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+        }
+        .elev-btn:active { background: var(--accent); border-color: var(--accent); }
+
+        /* Minimap Box */
+        #minimap-box {
+            position: absolute; top: 24px; right: 24px; 
+            width: 250px; height: 250px; 
+            background: #ffffff; border: 2px solid var(--panel-border);
+            border-radius: 12px; overflow: hidden; z-index: 10;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            display: none;
+        }
+        .minimap-title {
+            position: absolute; top: 0; left: 0; width: 100%; 
+            background: rgba(0,0,0,0.8); color: white; 
+            font-size: 11px; text-align: center; padding: 4px 0;
+            text-transform: uppercase; letter-spacing: 1px; font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div id="loader" style="display: none;">
+        <div class="spinner"></div>
+        <div id="loader-text" style="font-weight: 500; letter-spacing: 1px;">Procesando GeometrÃƒÆ’Ã‚Â­a...</div>
+    </div>
+
+    <div id="canvas-container"></div>
+    
+    <div id="minimap-box">
+        <div class="minimap-title">Planta (Corte)</div>
+    </div>
+
+    <div id="ui-panel" class="glass-panel">
+        <h1>TBV Viewer Pro</h1>
+        <div class="subtitle">BIM Optimization Engine</div>
+        
+        <label class="file-upload" id="upload-box">
+            <input type="file" id="file-input" accept=".tbv">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 12px auto; display: block; color: var(--accent);">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+            </svg>
+            <div style="font-weight: 500; font-size: 15px;">Seleccionar archivo .tbv</div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">O usa la versiÃƒÆ’Ã‚Â³n pre-cargada</div>
+        </label>
+        
+        <div id="controls" style="display: none;">
+            <div class="section-title">Cortes Reales WebGL</div>
+            
+            <div class="control-group">
+                <label>ElevaciÃƒÆ’Ã‚Â³n (Y) <span class="val" id="lbl-y">0</span></label>
+                <input type="range" id="clip-y-min" title="Y Min">
+                <input type="range" id="clip-y-max" title="Y Max">
+            </div>
+            <div class="control-group">
+                <label>Norte-Sur (Z) <span class="val" id="lbl-z">0</span></label>
+                <input type="range" id="clip-z-min" title="Z Min">
+                <input type="range" id="clip-z-max" title="Z Max">
+            </div>
+            <div class="control-group">
+                <label>Este-Oeste (X) <span class="val" id="lbl-x">0</span></label>
+                <input type="range" id="clip-x-min" title="X Min">
+                <input type="range" id="clip-x-max" title="X Max">
+            </div>
+            
+            <div class="stats" id="render-stats"></div>
+        </div>
+    </div>
+    
+    <div id="info-panel" class="glass-panel">
+        <h2>Propiedades del Elemento</h2>
+        <div id="info-content"></div>
+    </div>
+
+    <!-- Joystick and Elev Buttons -->
+    <div id="joystick-container">
+        <div id="joystick-knob"></div>
+    </div>
+    <div id="elev-controls">
+        <div id="btn-up" class="elev-btn">ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â²</div>
+        <div id="btn-down" class="elev-btn">ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â¼</div>
+    </div>
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <script>
+        let scene, camera, renderer, controls;
+        let minimapCamera;
+        let tbvData = null;
+        let instancedMeshes = [];
+        let groupIndexMap = new Map();
+        let mainGroup = new THREE.Group();
+
+        // Clipping Planes MatemÃƒÆ’Ã‚Â¡ticos
+        const clipPlanes = [
+            new THREE.Plane(new THREE.Vector3(1, 0, 0), 0),   // X Min (Corta lo que estÃƒÆ’Ã‚Â¡ detrÃƒÆ’Ã‚Â¡s del plano)
+            new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0),  // X Max
+            new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),   // Y Min
+            new THREE.Plane(new THREE.Vector3(0, -1, 0), 0),  // Y Max
+            new THREE.Plane(new THREE.Vector3(0, 0, 1), 0),   // Z Min
+            new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),  // Z Max
+        ];
+
+        // Caja visible de la secciÃƒÆ’Ã‚Â³n
+        let sectionBoxMesh;
+        const minimapMaterial = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide });
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        // Inicializar el visor 3D
+        initThree();
+        setupMobileControls();
+
+        function initThree() {
+            const container = document.getElementById('canvas-container');
+            
+            scene = new THREE.Scene();
+            scene.background = null; 
+            
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 50000);
+            camera.position.set(100, 100, 100);
+            
+            minimapCamera = new THREE.OrthographicCamera(-50, 50, 50, -50, 0.1, 2000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.localClippingEnabled = true; // ACTIVAR CORTES REALES WEBGL
+            container.appendChild(renderer.domElement);
+            
+            scene.add(mainGroup);
+            
+            // Caja visual de secciÃƒÆ’Ã‚Â³n (los planos transparentes)
+            const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+            const boxMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, wireframe: true, transparent: true, opacity: 0.15 });
+            sectionBoxMesh = new THREE.Mesh(boxGeo, boxMat);
+            scene.add(sectionBoxMesh);
+            
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            
+            window.addEventListener('resize', onWindowResize);
+            
+            let pointerDownPos = { x: 0, y: 0 };
+            renderer.domElement.addEventListener('pointerdown', (e) => {
+                pointerDownPos.x = e.clientX;
+                pointerDownPos.y = e.clientY;
+            });
+            renderer.domElement.addEventListener('pointerup', (e) => {
+                const dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
+                if (dist < 5) onMouseClick(e);
+            });
+            
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Update Joystick First-Person movement
+            updateJoystickMovement();
+            controls.update();
+
+            // 1. Render Principal
+            renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+            renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+            renderer.setScissorTest(false);
+            scene.overrideMaterial = null;
+            renderer.render(scene, camera);
+
+            // 2. Render Minimapa (Planta)
+            if (tbvData && document.getElementById('minimap-box').style.display !== 'none') {
+                const mapRect = document.getElementById('minimap-box').getBoundingClientRect();
+                const vY = window.innerHeight - mapRect.bottom;
+                
+                renderer.setViewport(mapRect.left, vY, mapRect.width, mapRect.height);
+                renderer.setScissor(mapRect.left, vY, mapRect.width, mapRect.height);
+                renderer.setScissorTest(true);
+                
+                const mapZoom = 40; 
+                minimapCamera.left = -mapZoom; minimapCamera.right = mapZoom;
+                minimapCamera.top = mapZoom; minimapCamera.bottom = -mapZoom;
+                minimapCamera.updateProjectionMatrix();
+                
+                minimapCamera.position.x = camera.position.x;
+                minimapCamera.position.z = camera.position.z;
+                
+                // Cortar justo por encima del usuario
+                minimapCamera.position.y = parseFloat(document.getElementById('clip-y-max').value) + 1;
+                minimapCamera.lookAt(camera.position.x, 0, camera.position.z);
+                
+                // Material negro sÃƒÆ’Ã‚Â³lido
+                scene.overrideMaterial = minimapMaterial;
+                renderer.setClearColor(0xffffff, 1); 
+                
+                sectionBoxMesh.visible = false;
+                renderer.render(scene, minimapCamera);
+                sectionBoxMesh.visible = true;
+                
+                renderer.setClearColor(0x000000, 0); 
+            }
+        }
+
+        // Joystick Mobile
+        let joyVector = { x: 0, y: 0 };
+        let elevVector = 0;
+
+        function setupMobileControls() {
+            const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+            if (isTouch) {
+                document.getElementById('joystick-container').style.display = 'block';
+                document.getElementById('elev-controls').style.display = 'flex';
+            }
+
+            const joyZone = document.getElementById('joystick-container');
+            const joyKnob = document.getElementById('joystick-knob');
+
+            joyZone.addEventListener('pointerdown', (e) => {
+                joyZone.setPointerCapture(e.pointerId);
+                updateKnob(e);
+            });
+            joyZone.addEventListener('pointermove', (e) => {
+                if (joyZone.hasPointerCapture(e.pointerId)) updateKnob(e);
+            });
+            joyZone.addEventListener('pointerup', (e) => {
+                joyZone.releasePointerCapture(e.pointerId);
+                resetKnob();
+            });
+
+            function updateKnob(e) {
+                const rect = joyZone.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                let dx = e.clientX - cx;
+                let dy = e.clientY - cy;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                const maxDist = 40;
+                if (dist > maxDist) {
+                    dx = (dx / dist) * maxDist;
+                    dy = (dy / dist) * maxDist;
+                }
+                joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+                joyVector.x = dx / maxDist;
+                joyVector.y = dy / maxDist;
+            }
+            function resetKnob() {
+                joyKnob.style.transform = `translate(0px, 0px)`;
+                joyVector.x = 0; joyVector.y = 0;
+            }
+
+            const btnUp = document.getElementById('btn-up');
+            const btnDown = document.getElementById('btn-down');
+            btnUp.addEventListener('pointerdown', () => elevVector = 1);
+            btnUp.addEventListener('pointerup', () => elevVector = 0);
+            btnUp.addEventListener('pointerleave', () => elevVector = 0);
+            btnDown.addEventListener('pointerdown', () => elevVector = -1);
+            btnDown.addEventListener('pointerup', () => elevVector = 0);
+            btnDown.addEventListener('pointerleave', () => elevVector = 0);
+        }
+
+        function updateJoystickMovement() {
+            if (joyVector.x === 0 && joyVector.y === 0 && elevVector === 0) return;
+            
+            const speed = 0.6;
+            const dir = new THREE.Vector3();
+            camera.getWorldDirection(dir);
+            dir.y = 0; dir.normalize();
+            
+            const right = new THREE.Vector3();
+            right.crossVectors(dir, new THREE.Vector3(0,1,0)).normalize();
+            
+            const moveX = right.clone().multiplyScalar(joyVector.x * speed);
+            const moveZ = dir.clone().multiplyScalar(-joyVector.y * speed); 
+            
+            const delta = moveX.add(moveZ);
+            delta.y += elevVector * speed;
+            
+            camera.position.add(delta);
+            controls.target.add(delta); 
+        }
+
+        // Carga de Archivos
+        const fileInput = document.getElementById('file-input');
+                fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                loadTBVFile(e.target.files[0]);
+                e.target.value = ''; // Reset input to allow selecting same file again
+            }
+        });
+        
+                // Drag and Drop
+        document.body.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            document.body.style.opacity = '0.7';
+        });
+        document.body.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            document.body.style.opacity = '1';
+        });
+        document.body.addEventListener('drop', (e) => {
+            e.preventDefault();
+            document.body.style.opacity = '1';
+            if (e.dataTransfer.files.length > 0) {
+                loadTBVFile(e.dataTransfer.files[0]);
+            }
+        });
+        
+        window.onload = () => {
+            const embedded = document.getElementById('embedded-tbv');
+            if (embedded && embedded.textContent.trim().length > 100) {
+                // document.getElementById('upload-box').style.display = 'none';
+                loadFromBase64(embedded.textContent.trim());
+            }
+        };
+
+        function loadFromBase64(b64) {
+            document.getElementById('loader').style.display = 'flex';
+            document.getElementById('loader').style.opacity = '1';
+            document.getElementById('loader-text').innerText = 'Decodificando modelo incrustado...';
+            setTimeout(() => {
+                try {
+                    const binaryString = window.atob(b64);
+                    const len = binaryString.length;
+                    const bytes = new Uint8Array(len);
+                    for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+                    parseAndBuildScene(bytes.buffer);
+                    document.getElementById('loader').style.opacity = '0';
+                    setTimeout(() => document.getElementById('loader').style.display = 'none', 500);
+                    document.getElementById('controls').style.display = 'block';
+                    document.getElementById('minimap-box').style.display = 'block';
+                } catch(err) {
+                    alert('Error: ' + err.message);
+                    document.getElementById('loader').style.display = 'none';
+                }
+            }, 100);
+        }
+
+        async function loadTBVFile(file) {
+            document.getElementById('loader').style.display = 'flex';
+            document.getElementById('loader').style.opacity = '1';
+            document.getElementById('loader-text').innerText = 'Leyendo archivo binario...';
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                document.getElementById('loader-text').innerText = 'Decodificando TBV en memoria...';
+                setTimeout(() => {
+                    try {
+                        parseAndBuildScene(arrayBuffer);
+                        document.getElementById('loader').style.opacity = '0';
+                        setTimeout(() => document.getElementById('loader').style.display = 'none', 500);
+                        document.getElementById('controls').style.display = 'block';
+                        document.getElementById('minimap-box').style.display = 'block';
+                        // document.getElementById('upload-box').style.display = 'none';
+                    } catch(err) {
+                        alert('Error al construir escena: ' + err.message);
+                        document.getElementById('loader').style.display = 'none';
+                    }
+                }, 50);
+            } catch(err) {
+                alert('Error al cargar archivo: ' + err.message);
+                document.getElementById('loader').style.display = 'none';
+            }
+        }
+
+        function parseAndBuildScene(buffer) {
+            const view = new DataView(buffer);
+            let offset = 0;
+            const magic = view.getInt32(offset, true); offset += 4;
+            if (magic !== 0x56544254) throw new Error("Magic Number invÃƒÆ’Ã‚Â¡lido.");
+            
+            const version = view.getInt32(offset, true); offset += 4;
+            const matCount = view.getInt32(offset, true); offset += 4;
+            const poolCount = view.getInt32(offset, true); offset += 4;
+            const instCount = view.getInt32(offset, true); offset += 4;
+
+            const sceneMin = [view.getFloat32(offset, true), view.getFloat32(offset+4, true), view.getFloat32(offset+8, true)]; offset += 12;
+            const sceneMax = [view.getFloat32(offset, true), view.getFloat32(offset+4, true), view.getFloat32(offset+8, true)]; offset += 12;
+
+            const materials = [];
+            for(let i=0; i<matCount; i++) {
+                const matId = view.getInt32(offset, true); offset += 4;
+                materials.push({ matId, r: view.getUint8(offset++), g: view.getUint8(offset++), b: view.getUint8(offset++), a: view.getUint8(offset++) });
+            }
+
+            const meshes = [];
+            for(let i=0; i<poolCount; i++) {
+                const vc = view.getInt32(offset, true); offset += 4;
+                const idx16 = view.getUint8(offset++) === 1;
+                const tc = view.getInt32(offset, true); offset += 4;
+                const positions = new Float32Array(buffer.slice(offset, offset + vc * 12)); offset += vc * 12;
+                const normalsInt8 = new Int8Array(buffer.slice(offset, offset + vc * 3)); offset += vc * 3;
+                const indicesLen = tc * 3;
+                let indices;
+                if (idx16) { indices = new Uint16Array(buffer.slice(offset, offset + indicesLen * 2)); offset += indicesLen * 2; } 
+                else { indices = new Uint32Array(buffer.slice(offset, offset + indicesLen * 4)); offset += indicesLen * 4; }
+                meshes.push({ vc, tc, positions, normalsInt8, indices });
+            }
+
+            const instances = [];
+            const textDecoder = new TextDecoder('utf-8');
+            for(let i=0; i<instCount; i++) {
+                const meshIdx = view.getInt32(offset, true); offset += 4;
+                const elId = view.getInt32(offset, true); offset += 4;
+                const catId = view.getInt32(offset, true); offset += 4;
+                const matIdx = view.getInt32(offset, true); offset += 4;
+                const dx = view.getFloat32(offset, true); offset += 4;
+                const dy = view.getFloat32(offset, true); offset += 4;
+                const dz = view.getFloat32(offset, true); offset += 4;
+                const gmin = [view.getFloat32(offset, true), view.getFloat32(offset+4, true), view.getFloat32(offset+8, true)]; offset += 12;
+                const gmax = [view.getFloat32(offset, true), view.getFloat32(offset+4, true), view.getFloat32(offset+8, true)]; offset += 12;
+                const guidLen = view.getUint16(offset, true); offset += 2;
+                const guidBuf = buffer.slice(offset, offset + guidLen);
+                const guid = textDecoder.decode(guidBuf); offset += guidLen;
+                instances.push({ meshIdx, elId, catId, matIdx, dx, dy, dz, gmin, gmax, guid });
+            }
+
+            tbvData = { sceneMin, sceneMax, materials, meshes, instances };
+            buildThreeScene();
+        }
+
+        function buildThreeScene() {
+            while(mainGroup.children.length > 0){ 
+                const child = mainGroup.children[0];
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) child.material.dispose();
+                mainGroup.remove(child); 
+            }
+            instancedMeshes = [];
+            groupIndexMap.clear();
+
+            const geometries = tbvData.meshes.map(m => {
+                const geo = new THREE.BufferGeometry();
+                geo.setAttribute('position', new THREE.BufferAttribute(m.positions, 3));
+                geo.setAttribute('normal', new THREE.BufferAttribute(m.normalsInt8, 3, true));
+                geo.setIndex(new THREE.BufferAttribute(m.indices, 1));
+                geo.computeBoundingSphere();
+                return geo;
+            });
+
+            const groups = new Map();
+            for(const inst of tbvData.instances) {
+                const key = `${inst.meshIdx}_${inst.matIdx}`;
+                groups.set(key, (groups.get(key) || 0) + 1);
+            }
+
+            let groupCounter = 0;
+            for(const [key, count] of groups.entries()) {
+                const [meshIdxStr, matIdxStr] = key.split('_');
+                const meshIdx = parseInt(meshIdxStr);
+                const matIdx = parseInt(matIdxStr);
+                const matData = tbvData.materials[matIdx];
+                
+                const material = new THREE.MeshBasicMaterial({
+                    color: 0xffffff,
+                    side: THREE.DoubleSide,
+                    clippingPlanes: clipPlanes, // Aplicar cortes WebGL reales
+                    clipIntersection: false
+                });
+                
+                if (matData.a < 255) {
+                    material.transparent = true;
+                    material.opacity = matData.a / 255.0;
+                    material.depthWrite = false; // Fix para blending
+                    material.alphaTest = 0.05;
+                    material.userData.isGlass = true; // Marcar para aclarar el color base
+                } else {
+                    // Capping/Hatching (Relleno Rayado) usando shader en las caras internas (BackSide)
+                    material.onBeforeCompile = function(shader) {
+                        shader.vertexShader = shader.vertexShader.replace(
+                            '#include <project_vertex>',
+                            `
+                            #include <project_vertex>
+                            vWorldPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+                            `
+                        );
+                        shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
+
+                        shader.fragmentShader = shader.fragmentShader.replace(
+                            '#include <clipping_planes_fragment>',
+                            `
+                            #include <clipping_planes_fragment>
+                            if ( ! gl_FrontFacing ) {
+                                // Dibujar relleno rayado (hatching) para representar secciÃƒÆ’Ã‚Â³n cortada
+                                float scale = 2.0;
+                                float val = fract((vWorldPos.x + vWorldPos.y + vWorldPos.z) * scale);
+                                if (val > 0.5) {
+                                    gl_FragColor = vec4(0.15, 0.15, 0.15, 1.0);
+                                } else {
+                                    gl_FragColor = vec4(0.4, 0.4, 0.4, 1.0);
+                                }
+                                return; // ignorar color de instancia, forzar gris rayado
+                            }
+                            `
+                        );
+                        shader.fragmentShader = `varying vec3 vWorldPos;\n` + shader.fragmentShader;
+                    };
+                }
+
+                const imesh = new THREE.InstancedMesh(geometries[meshIdx], material, count);
+                imesh.userData = { meshIdx, matIdx, currentCount: 0, instanceMap: new Array(count) };
+                
+                mainGroup.add(imesh);
+                instancedMeshes.push(imesh);
+                groupIndexMap.set(key, groupCounter++);
+            }
+
+            setupSliders(tbvData.sceneMin, tbvData.sceneMax);
+            updateInstances();
+            
+            const cx = (tbvData.sceneMin[0] + tbvData.sceneMax[0]) / 2;
+            const cy = (tbvData.sceneMin[1] + tbvData.sceneMax[1]) / 2;
+            const cz = (tbvData.sceneMin[2] + tbvData.sceneMax[2]) / 2;
+            const size = Math.max(tbvData.sceneMax[0]-tbvData.sceneMin[0], tbvData.sceneMax[1]-tbvData.sceneMin[1], tbvData.sceneMax[2]-tbvData.sceneMin[2]);
+            
+            controls.target.set(cx, cy, cz);
+            camera.position.set(cx + size*0.8, cy + size*0.6, cz + size*0.8);
+            controls.update();
+        }
+
+        function setupSliders(min, max) {
+            const axes = ['x', 'y', 'z'];
+            axes.forEach((ax, idx) => {
+                const slMin = document.getElementById(`clip-${ax}-min`);
+                const slMax = document.getElementById(`clip-${ax}-max`);
+                const pad = (max[idx] - min[idx]) * 0.05 || 1;
+                const vmin = min[idx] - pad; const vmax = max[idx] + pad;
+                const step = (vmax - vmin) / 500;
+                slMin.min = vmin; slMin.max = vmax; slMin.step = step; slMin.value = vmin;
+                slMax.min = vmin; slMax.max = vmax; slMax.step = step; slMax.value = vmax;
+                
+                const updateLbl = () => {
+                    document.getElementById(`lbl-${ax}`).innerText = `${parseFloat(slMin.value).toFixed(1)} a ${parseFloat(slMax.value).toFixed(1)}`;
+                    updateInstances();
+                };
+                slMin.oninput = updateLbl; slMax.oninput = updateLbl;
+                document.getElementById(`lbl-${ax}`).innerText = `${parseFloat(slMin.value).toFixed(1)} a ${parseFloat(slMax.value).toFixed(1)}`;
+            });
+        }
+
+        let selectedGlobalId = null;
+        const highlightColor = new THREE.Color(0xfacc15); 
+
+        function updateInstances() {
+            if (!tbvData || instancedMeshes.length === 0) return;
+            
+            const bxMin = parseFloat(document.getElementById('clip-x-min').value);
+            const bxMax = parseFloat(document.getElementById('clip-x-max').value);
+            const byMin = parseFloat(document.getElementById('clip-y-min').value);
+            const byMax = parseFloat(document.getElementById('clip-y-max').value);
+            const bzMin = parseFloat(document.getElementById('clip-z-min').value);
+            const bzMax = parseFloat(document.getElementById('clip-z-max').value);
+            
+            // Actualizar Planos MatemÃƒÆ’Ã‚Â¡ticos para WebGL Clipping (EcuaciÃƒÆ’Ã‚Â³n Ax+By+Cz+D = 0)
+            // Conserva todo lo que estÃƒÆ’Ã‚Â© donde dot(normal, punto) > constante.
+            // Para mantener x > bxMin con normal (1,0,0), constante es -bxMin (x - bxMin > 0 -> x > bxMin).
+            clipPlanes[0].constant = -bxMin;
+            clipPlanes[1].constant = bxMax;
+            clipPlanes[2].constant = -byMin;
+            clipPlanes[3].constant = byMax;
+            clipPlanes[4].constant = -bzMin;
+            clipPlanes[5].constant = bzMax;
+            
+            // Actualizar caja guÃƒÆ’Ã‚Â­a transparente
+            sectionBoxMesh.position.set((bxMin+bxMax)/2, (byMin+byMax)/2, (bzMin+bzMax)/2);
+            sectionBoxMesh.scale.set(bxMax-bxMin, byMax-byMin, bzMax-bzMin);
+
+            const dummy = new THREE.Object3D();
+            const colorDummy = new THREE.Color();
+            
+            for(let i=0; i<instancedMeshes.length; i++) instancedMeshes[i].userData.currentCount = 0;
+            
+            let visibleCount = 0;
+            for(let i=0; i<tbvData.instances.length; i++) {
+                const inst = tbvData.instances[i];
+                
+                // Culling grueso (solo descartar si estÃƒÆ’Ã‚Â¡ TOTALMENTE fuera de la caja, de lo contrario WebGL recorta el resto)
+                if (inst.gmax[0] < bxMin || inst.gmin[0] > bxMax ||
+                    inst.gmax[1] < byMin || inst.gmin[1] > byMax ||
+                    inst.gmax[2] < bzMin || inst.gmin[2] > bzMax) {
+                    continue;
+                }
+                
+                const key = `${inst.meshIdx}_${inst.matIdx}`;
+                const imeshIdx = groupIndexMap.get(key);
+                const imesh = instancedMeshes[imeshIdx];
+                const idx = imesh.userData.currentCount++;
+                
+                dummy.position.set(inst.dx, inst.dy, inst.dz);
+                dummy.updateMatrix();
+                imesh.setMatrixAt(idx, dummy.matrix);
+                
+                if (selectedGlobalId === i) {
+                    imesh.setColorAt(idx, highlightColor);
+                } else {
+                    const mat = tbvData.materials[inst.matIdx];
+                    let r = mat.r/255.0, g = mat.g/255.0, b = mat.b/255.0;
+                    
+                    // Aclarado artificial de vidrios negros
+                    if (imesh.material.userData.isGlass && r < 0.25 && g < 0.25 && b < 0.25) {
+                        r = 0.5; g = 0.7; b = 0.9;
+                    }
+                    
+                    colorDummy.setRGB(r, g, b);
+                    imesh.setColorAt(idx, colorDummy);
+                }
+                imesh.userData.instanceMap[idx] = i; 
+                visibleCount++;
+            }
+            
+            for(let i=0; i<instancedMeshes.length; i++) {
+                const imesh = instancedMeshes[i];
+                imesh.count = imesh.userData.currentCount;
+                imesh.instanceMatrix.needsUpdate = true;
+                if (imesh.instanceColor) imesh.instanceColor.needsUpdate = true;
+            }
+            
+            document.getElementById('render-stats').innerHTML = `Instancias en Render (Antes del Clipping MatemÃƒÆ’Ã‚Â¡tico): <span>${visibleCount.toLocaleString()}</span>`;
+        }
+
+        function onMouseClick(event) {
+            // Ignorar click si fue sobre el joystick o panel
+            if (event.target.closest('#joystick-container') || event.target.closest('#elev-controls') || event.target.closest('#ui-panel')) return;
+
+            if (!tbvData || event.button !== 0) return;
+            
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(instancedMeshes);
+            
+            if (selectedGlobalId !== null) {
+                selectedGlobalId = null;
+                document.getElementById('info-panel').classList.remove('show');
+                setTimeout(() => { if(selectedGlobalId === null) document.getElementById('info-panel').style.display = 'none'; }, 300);
+            }
+            
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                selectedGlobalId = intersect.object.userData.instanceMap[intersect.instanceId];
+                updateInstances();
+                
+                const inst = tbvData.instances[selectedGlobalId];
+                const infoPanel = document.getElementById('info-panel');
+                const infoContent = document.getElementById('info-content');
+                
+                infoContent.innerHTML = `
+                    <div class="info-row"><span class="info-label">Element ID</span><span class="info-val">${inst.elId}</span></div>
+                    <div class="info-row"><span class="info-label">Category ID</span><span class="info-val">${inst.catId}</span></div>
+                    <div class="info-row"><span class="info-label">Mesh Pool ID</span><span class="info-val">${inst.meshIdx}</span></div>
+                    <div class="info-row" style="border-bottom: none; margin-top: 8px;"><span class="info-label">PosiciÃƒÆ’Ã‚Â³n Global (X, Y, Z)</span></div>
+                    <div class="info-row" style="font-size: 12px; font-variant-numeric: tabular-nums;"><span class="info-val">${inst.dx.toFixed(3)}, ${inst.dy.toFixed(3)}, ${inst.dz.toFixed(3)}</span></div>
+                `;
+                
+                infoPanel.style.display = 'block';
+                void infoPanel.offsetWidth;
+                infoPanel.classList.add('show');
+            } else {
+                updateInstances();
+            }
+        }
+    </script>
+</body>
+</html>
