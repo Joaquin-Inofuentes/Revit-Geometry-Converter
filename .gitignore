@@ -3,6 +3,13 @@ codigo/**/bin/
 codigo/**/obj/
 temp_simplifier/
 
+# Node
+node_modules/
+
+# Salida de la suite de tests (se regenera con `npm test`)
+screenshots/
+scratch_*.js
+
 # Ignorar archivos generados excesivamente grandes si se desea (opcional)
 # *.obj
 # *.glb

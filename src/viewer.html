@@ -1,0 +1,2397 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="color-scheme" content="dark">
+    <title>TBV Viewer Pro</title>
+    <!-- Inline icon: keeps the file self-contained and avoids a /favicon.ico 404. -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%233b82f6'/%3E%3Cpath d='M4 11V6l4-2 4 2v5' stroke='white' stroke-width='1.4' fill='none'/%3E%3C/svg%3E">
+    <style>
+        :root {
+            --bg-grad-start: #020617;
+            --bg-grad-end: #0f172a;
+            --panel-bg: rgba(15, 23, 42, 0.72);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --accent-hover: #60a5fa;
+            --danger: #ef4444;
+            --safe-t: env(safe-area-inset-top, 0px);
+            --safe-b: env(safe-area-inset-bottom, 0px);
+            --safe-l: env(safe-area-inset-left, 0px);
+            --safe-r: env(safe-area-inset-right, 0px);
+            --gap: 24px;
+            --minimap: 125px;
+        }
+
+        * { box-sizing: border-box; }
+
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden;
+            background: radial-gradient(circle at center, var(--bg-grad-end), var(--bg-grad-start));
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: var(--text-main);
+            user-select: none; -webkit-user-select: none;
+            touch-action: none;
+            overscroll-behavior: none;
+        }
+
+        #canvas-container { position: absolute; inset: 0; z-index: 1; }
+        #canvas-container canvas { display: block; }
+
+        .glass-panel {
+            position: absolute; z-index: 10;
+            background: var(--panel-bg);
+            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+        }
+
+        /* ---------- Anchors: each panel owns one screen corner ---------- */
+        #ui-panel {
+            top: calc(var(--gap) + var(--safe-t));
+            left: calc(var(--gap) + var(--safe-l));
+            width: 300px;
+            max-height: calc(100dvh - 2 * var(--gap) - var(--safe-t) - var(--safe-b));
+            display: flex; flex-direction: column;
+        }
+        /* The plan view is painted by the WebGL renderer into a scissor
+           rectangle that lines up with this element. The element itself must
+           therefore stay transparent: an opaque background would sit on top
+           of the canvas (z-index 10 vs 1) and hide the map completely.
+           Corners are kept nearly square because a border-radius clips DOM
+           children, not the canvas underneath. */
+        #minimap-box {
+            position: absolute; z-index: 10;
+            top: calc(var(--gap) + var(--safe-t));
+            right: calc(var(--gap) + var(--safe-r));
+            width: var(--minimap); height: var(--minimap);
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.22);
+            border-radius: 4px;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+            display: none;
+            pointer-events: none;
+        }
+
+        /* ---------- Tool bar (under the minimap) ---------- */
+        #toolbar {
+            position: absolute; z-index: 15;
+            top: calc(var(--gap) * 2 + var(--safe-t) + var(--minimap));
+            right: calc(var(--gap) + var(--safe-r));
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        .tool-btn { background: var(--panel-bg); }
+        .tool-btn.tool-active { background: var(--accent); border-color: var(--accent); }
+
+        #cat-menu {
+            position: absolute; z-index: 16;
+            top: calc(var(--gap) * 2 + var(--safe-t) + var(--minimap));
+            right: calc(var(--gap) * 2 + var(--safe-r) + 34px);
+            width: 190px; max-height: 55dvh; overflow-y: auto;
+            background: var(--panel-bg);
+            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--panel-border); border-radius: 12px;
+            padding: 10px;
+        }
+        .cat-head {
+            font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+            color: var(--text-muted); font-weight: 600;
+            border-bottom: 1px solid var(--panel-border);
+            padding-bottom: 6px; margin-bottom: 6px;
+            display: flex; justify-content: space-between; align-items: baseline;
+        }
+        .cat-hint { font-size: 9px; text-transform: none; letter-spacing: 0; }
+        .cat-row {
+            display: flex; align-items: center; gap: 8px;
+            padding: 5px 4px; border-radius: 8px; font-size: 13px;
+        }
+        .cat-row:hover { background: rgba(255,255,255,0.06); }
+        .cat-row.cat-off .cat-name { color: var(--text-muted); text-decoration: line-through; }
+        .cat-name { flex: 1 1 auto; cursor: pointer; }
+        .cat-name:hover { color: var(--accent-hover); }
+        .cat-reset { width: 100%; margin-top: 8px; padding: 7px 0; font-size: 12px; }
+
+        /* ---------- Dimension labels (always readable, on top of 3D) ---------- */
+        #dim-labels { position: absolute; inset: 0; z-index: 25; pointer-events: none; }
+        .dim-label {
+            position: absolute; transform: translate(-50%, -50%);
+            background: rgba(2,6,23,0.88); color: #fff;
+            border: 1px solid rgba(250,204,21,0.55);
+            font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+            padding: 2px 7px; border-radius: 7px; white-space: nowrap;
+        }
+
+        #info-panel {
+            bottom: calc(var(--gap) + var(--safe-b));
+            right: calc(var(--gap) + var(--safe-r));
+            width: 280px;
+            padding: 20px;
+            display: none;
+            transform: translateY(16px); opacity: 0;
+            transition: transform .28s cubic-bezier(.4,0,.2,1), opacity .28s cubic-bezier(.4,0,.2,1);
+            z-index: 30;
+        }
+        #info-panel.show { transform: translateY(0); opacity: 1; }
+
+        #joystick-container {
+            display: none; position: absolute;
+            bottom: calc(30px + var(--safe-b)); left: calc(30px + var(--safe-l));
+            width: 140px; height: 140px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 50%; border: 2px solid rgba(255,255,255,0.12);
+            z-index: 20; touch-action: none;
+            backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+        }
+        #joystick-knob {
+            position: absolute; top: 50%; left: 50%;
+            width: 60px; height: 60px;
+            margin: -30px 0 0 -30px;
+            background: var(--accent); border-radius: 50%;
+            box-shadow: 0 4px 12px rgba(59,130,246,0.5);
+            pointer-events: none;
+            transition: transform .08s ease-out;
+        }
+        #joystick-container.active #joystick-knob { transition: none; }
+
+        #elev-controls {
+            display: none; position: absolute;
+            bottom: calc(30px + var(--safe-b)); right: calc(30px + var(--safe-r));
+            flex-direction: column; gap: 16px; z-index: 20;
+        }
+        .elev-btn {
+            width: 60px; height: 60px;
+            background: rgba(255,255,255,0.08);
+            border: 2px solid rgba(255,255,255,0.2);
+            border-radius: 50%; color: #fff; font-size: 22px;
+            touch-action: none; -webkit-tap-highlight-color: transparent;
+            backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+        }
+        .elev-btn.pressed { background: var(--accent); border-color: var(--accent); }
+
+        /* Info panel open on phones hides the movement controls so nothing overlaps */
+        body.info-open #joystick-container,
+        body.info-open #elev-controls { display: none !important; }
+
+        /* ---------- Panel chrome ---------- */
+        .panel-head {
+            display: flex; align-items: center; gap: 12px;
+            padding: 20px 20px 16px 20px;
+            flex: 0 0 auto;
+        }
+        .panel-head .titles { flex: 1 1 auto; min-width: 0; }
+        h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.4px; }
+        .subtitle { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+        h2 { margin: 0 0 14px 0; font-size: 14px; color: var(--accent-hover); }
+
+        .icon-btn {
+            flex: 0 0 auto;
+            width: 34px; height: 34px; border-radius: 10px;
+            border: 1px solid var(--panel-border);
+            background: rgba(255,255,255,0.06); color: var(--text-main);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; font-size: 15px; line-height: 1;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .icon-btn:hover { background: rgba(255,255,255,0.12); }
+        #ui-toggle { display: flex; }
+        #ui-toggle .chev { transition: transform .25s ease; }
+        body.panel-collapsed #ui-toggle .chev { transform: rotate(-90deg); }
+
+        #controls {
+            padding: 0 20px 20px 20px;
+            overflow-y: auto; overscroll-behavior: contain;
+            touch-action: pan-y;
+            flex: 1 1 auto; min-height: 0;
+        }
+        body.panel-collapsed #controls { display: none; }
+
+        .section-title {
+            font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+            color: var(--text-muted); margin: 0 0 14px 0; font-weight: 600;
+            border-bottom: 1px solid var(--panel-border); padding-bottom: 8px;
+            display: flex; justify-content: space-between; align-items: baseline;
+        }
+        .link-btn {
+            background: none; border: none; color: var(--accent-hover);
+            font: inherit; font-size: 10px; letter-spacing: .5px;
+            cursor: pointer; padding: 0; text-transform: uppercase;
+        }
+        .link-btn:hover { color: #fff; }
+
+        .control-group { margin-bottom: 16px; }
+        .control-group label {
+            display: flex; justify-content: space-between;
+            margin-bottom: 6px; font-size: 12px; color: var(--text-main);
+        }
+        .control-group .val { color: var(--accent-hover); font-variant-numeric: tabular-nums; font-size: 11px; }
+
+        input[type="range"] {
+            width: 100%; -webkit-appearance: none; appearance: none;
+            background: transparent; margin: 0 0 6px 0;
+            touch-action: none; cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
+            background: var(--accent); margin-top: -6px;
+            box-shadow: 0 0 10px rgba(59,130,246,0.5); transition: transform .1s;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+        input[type="range"]::-moz-range-track { width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; }
+        input[type="range"]::-moz-range-thumb { height: 16px; width: 16px; border: none; border-radius: 50%; background: var(--accent); }
+
+        .stats {
+            font-size: 11px; color: var(--text-muted); margin-top: 18px;
+            background: rgba(0,0,0,0.25); padding: 12px; border-radius: 10px; line-height: 1.7;
+        }
+        .stats .row { display: flex; justify-content: space-between; gap: 8px; }
+        .stats .k { color: var(--text-muted); }
+        .stats .v { color: var(--text-main); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+        .info-row {
+            display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px;
+            font-size: 13px; border-bottom: 1px dashed rgba(255,255,255,0.06); padding-bottom: 5px;
+        }
+        .info-label { color: var(--text-muted); flex: 0 0 auto; }
+        .info-val { font-weight: 500; user-select: text; -webkit-user-select: text; text-align: right; word-break: break-all; }
+        .info-head { display: flex; align-items: flex-start; justify-content: space-between; }
+
+        /* ---------- Loader / dropzone ---------- */
+        #loader {
+            position: absolute; inset: 0;
+            background: var(--bg-grad-end); z-index: 100;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: opacity .45s ease; padding: 24px; text-align: center;
+        }
+        #loader.hidden { opacity: 0; pointer-events: none; }
+        .spinner {
+            width: 56px; height: 56px; border: 4px solid rgba(255,255,255,0.1);
+            border-top-color: var(--accent); border-radius: 50%;
+            animation: spin 1s cubic-bezier(.5,0,.5,1) infinite; margin-bottom: 22px;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        #loader-text { font-weight: 500; letter-spacing: 1px; font-size: 14px; }
+        #loader-bar { width: min(280px, 70vw); height: 3px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 18px; overflow: hidden; }
+        #loader-bar > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .2s ease; }
+
+        #dropzone {
+            position: absolute; inset: 0; z-index: 90;
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            gap: 16px; padding: 24px; text-align: center;
+            background: rgba(2,6,23,0.85);
+        }
+        #dropzone.show { display: flex; }
+        #dropzone .box {
+            border: 2px dashed rgba(255,255,255,0.2); border-radius: 20px;
+            padding: 40px 32px; max-width: 460px;
+        }
+        .btn {
+            display: inline-block; margin-top: 16px; padding: 10px 18px;
+            background: var(--accent); color: #fff; border: none; border-radius: 10px;
+            font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+        }
+        .btn:hover { background: var(--accent-hover); }
+        body.dragging #dropzone { display: flex; }
+        body.dragging #dropzone .box { border-color: var(--accent); background: rgba(59,130,246,0.08); }
+
+        #error-stack { position: absolute; top: 0; left: 0; right: 0; z-index: 9999; pointer-events: none; }
+        .error-toast {
+            background: var(--danger); color: #fff; font-size: 12px; font-family: ui-monospace, monospace;
+            padding: 8px 12px; border-bottom: 1px solid rgba(0,0,0,.3);
+            white-space: pre-wrap; word-break: break-word; pointer-events: auto;
+        }
+
+        .hint {
+            position: absolute; bottom: calc(10px + var(--safe-b)); left: 50%; transform: translateX(-50%);
+            font-size: 11px; color: var(--text-muted); z-index: 5; opacity: .7; white-space: nowrap;
+        }
+
+        /* ---------- Phones ---------- */
+        @media (max-width: 768px) {
+            :root { --gap: 10px; --minimap: 84px; }
+
+            #ui-panel {
+                /* Reserve the minimap's corner: never overlap it. */
+                width: auto;
+                right: calc(var(--gap) * 2 + var(--minimap) + var(--safe-r));
+                max-height: calc(100dvh - 2 * var(--gap) - var(--safe-t) - var(--safe-b));
+            }
+            /* Expanded controls need the full width, so the minimap steps aside. */
+            body:not(.panel-collapsed) #ui-panel { right: calc(var(--gap) + var(--safe-r)); }
+            body:not(.panel-collapsed) #minimap-box { display: none !important; }
+            body:not(.panel-collapsed) #toolbar { display: none !important; }
+            body:not(.panel-collapsed) #cat-menu { display: none !important; }
+
+            .panel-head { padding: 12px 12px 12px 14px; }
+            #controls { padding: 0 14px 14px 14px; max-height: 50dvh; }
+            h1 { font-size: 16px; }
+            .subtitle { font-size: 10px; }
+
+            /* Info panel becomes a bottom sheet */
+            #info-panel {
+                left: 0; right: 0; bottom: 0; width: auto;
+                border-radius: 16px 16px 0 0;
+                padding: 16px 16px calc(16px + var(--safe-b)) 16px;
+                transform: translateY(100%);
+                z-index: 40;
+            }
+            #info-panel.show { transform: translateY(0); }
+
+            #joystick-container { bottom: calc(18px + var(--safe-b)); left: calc(18px + var(--safe-l)); width: 108px; height: 108px; }
+            #joystick-knob { width: 46px; height: 46px; margin: -23px 0 0 -23px; }
+            #elev-controls { bottom: calc(18px + var(--safe-b)); right: calc(18px + var(--safe-r)); gap: 12px; }
+            .elev-btn { width: 50px; height: 50px; font-size: 18px; }
+            .hint { display: none; }
+        }
+
+        @media (max-width: 768px) and (orientation: landscape) {
+            #controls { max-height: 42dvh; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+        }
+    </style>
+</head>
+<body class="panel-collapsed">
+    <div id="error-stack"></div>
+
+    <div id="loader">
+        <div class="spinner"></div>
+        <div id="loader-text">Iniciando…</div>
+        <div id="loader-bar"><i></i></div>
+    </div>
+
+    <div id="dropzone">
+        <div class="box">
+            <h1>Sin modelo incrustado</h1>
+            <div class="subtitle" style="margin-top:8px">Arrastrá un archivo <b>.tbv</b> acá, o abrilo desde el disco.</div>
+            <button class="btn" id="pick-file">Abrir archivo .tbv</button>
+            <input type="file" id="file-input" accept=".tbv,application/octet-stream" hidden>
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <div id="minimap-box"></div>
+
+    <!-- Tool buttons live under the minimap: filter, measure, rays, gyro -->
+    <div id="toolbar">
+        <button class="icon-btn tool-btn" id="tool-filter" title="Filtrar categorías" aria-label="Filtrar categorías">▦</button>
+        <button class="icon-btn tool-btn" id="tool-reset-filter" title="Restablecer filtro" aria-label="Restablecer filtro" style="display:none">⟲</button>
+        <button class="icon-btn tool-btn" id="tool-measure" title="Acotar: dos puntos" aria-label="Acotar dos puntos">⟷</button>
+        <button class="icon-btn tool-btn" id="tool-rays" title="Cota multidireccional" aria-label="Cota multidireccional">✛</button>
+        <button class="icon-btn tool-btn" id="tool-gyro" title="Giroscopio" aria-label="Giroscopio">◎</button>
+        <button class="icon-btn tool-btn" id="tool-north" title="Calibrar norte" aria-label="Calibrar norte" style="display:none">N</button>
+    </div>
+    <div id="cat-menu" style="display:none"></div>
+    <div id="dim-labels"></div>
+
+    <div id="ui-panel" class="glass-panel">
+        <div class="panel-head">
+            <button class="icon-btn" id="ui-toggle" aria-label="Mostrar u ocultar controles" aria-expanded="false">
+                <span class="chev">▾</span>
+            </button>
+            <div class="titles">
+                <h1>TBV Viewer Pro</h1>
+                <div class="subtitle">BIM Optimization Engine</div>
+            </div>
+        </div>
+
+        <div id="controls">
+            <div class="section-title">
+                <span>Cortes Reales WebGL</span>
+                <button class="link-btn" id="btn-reset">Reiniciar</button>
+            </div>
+
+            <div class="control-group">
+                <label>Elevación (Y) <span class="val" id="lbl-y">—</span></label>
+                <input type="range" id="clip-y-min" aria-label="Y mínimo">
+                <input type="range" id="clip-y-max" aria-label="Y máximo">
+            </div>
+            <div class="control-group">
+                <label>Norte-Sur (Z) <span class="val" id="lbl-z">—</span></label>
+                <input type="range" id="clip-z-min" aria-label="Z mínimo">
+                <input type="range" id="clip-z-max" aria-label="Z máximo">
+            </div>
+            <div class="control-group">
+                <label>Este-Oeste (X) <span class="val" id="lbl-x">—</span></label>
+                <input type="range" id="clip-x-min" aria-label="X mínimo">
+                <input type="range" id="clip-x-max" aria-label="X máximo">
+            </div>
+
+            <div class="stats" id="render-stats"></div>
+        </div>
+    </div>
+
+    <div id="info-panel" class="glass-panel">
+        <div class="info-head">
+            <h2>Propiedades del Elemento</h2>
+            <button class="icon-btn" id="info-close" aria-label="Cerrar">✕</button>
+        </div>
+        <div id="info-content"></div>
+    </div>
+
+    <div id="joystick-container"><div id="joystick-knob"></div></div>
+    <div id="elev-controls">
+        <div id="btn-up" class="elev-btn" role="button" aria-label="Subir">▲</div>
+        <div id="btn-down" class="elev-btn" role="button" aria-label="Bajar">▼</div>
+    </div>
+
+    <div class="hint">Arrastrar: orbitar · Rueda: zoom · WASD: caminar · Q/E: subir y bajar · Click: inspeccionar · Doble click en el piso: ir allí</div>
+
+    <script>/*__THREE__*/</script>
+    <script>/*__ORBIT__*/</script>
+
+    <script>
+    "use strict";
+    (function () {
+
+    // ==================================================================
+    // ÍNDICE DE MÓDULOS (en orden de aparición)
+    //
+    //   Error surfacing ....... captura y muestra errores sin romper el canvas
+    //   State ................. estado global del visor + render-on-demand
+    //   Renderer bootstrap .... initThree, luces, calidad adaptativa
+    //   TBV parsing ........... parseTbv: binario -> arrays tipados
+    //   Scene construction .... buildScene (merge por material×categoría),
+    //                           esVidrio, makeMaterial, disposeScene
+    //   Section box ........... sliders de corte + clipping planes
+    //   MODULE CategoryFilter . menú desplegable, aislar y restablecer
+    //   Minimap ............... planta 2 pases (superficie gris / corte negro)
+    //   Navigation ............ joystick, botones ▲▼, teclado WASD+Q/E
+    //   Walk-to ............... doble click al piso, esfera y glide 850 ms
+    //   MODULE Measure ........ cotas 2 puntos y multidireccional
+    //   MODULE Gyro ........... giroscopio + calibrar norte
+    //   Picking ............... selección y panel de propiedades
+    //   Panel chrome .......... colapsar/expandir, encuadre de cámara
+    //   Frame loop ............ animate: sólo dibuja cuando algo cambió
+    //   Loading ............... base64/drag&drop, pasos con barra
+    //   Test surface .......... window.__viewer para la suite Selenium
+    // ==================================================================
+
+    // ------------------------------------------------------------------
+    // Error surfacing. Never touch body.innerHTML: it would destroy the
+    // canvas and every listener attached to it.
+    // ------------------------------------------------------------------
+    const errorStack = document.getElementById('error-stack');
+    const reportedErrors = [];
+
+    function reportError(label, detail) {
+        reportedErrors.push(label + ': ' + detail);
+        const el = document.createElement('div');
+        el.className = 'error-toast';
+        el.textContent = label + ': ' + detail;
+        errorStack.appendChild(el);
+    }
+
+    window.addEventListener('error', (e) => {
+        reportError('ERROR', (e.message || e.error) + ' @ ' + (e.filename || '?') + ':' + (e.lineno || 0));
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+        reportError('PROMISE ERROR', (e.reason && e.reason.message) || String(e.reason));
+    });
+
+    if (typeof THREE === 'undefined') {
+        reportError('FATAL', 'three.js no se cargó.');
+        return;
+    }
+
+
+    // ------------------------------------------------------------------
+    // State
+    // ------------------------------------------------------------------
+    let scene, camera, renderer, controls, clock;
+    let minimapCamera, minimapScene, minimapMarker, minimapRect;
+    let mainGroup = new THREE.Group();
+    let sectionBoxMesh, highlightMesh, walkMarker;
+
+    let tbvData = null;          // parsed file
+    let meshParts = [];          // one merged THREE.Mesh per material
+    let modelSize = 1;           // largest bbox dimension
+    let modelCenter = new THREE.Vector3();
+
+    let selectedId = null;
+    let boxDirty = true;         // sliders changed -> reapply before next frame
+    let ready = false;
+
+    // Render-on-demand. Anything that can change a pixel calls markDirty();
+    // a frame where nothing is dirty costs a flag check and zero GPU work.
+    // On a static view this is the difference between draining a phone
+    // battery at 60 fps and drawing nothing at all.
+    let needsRender = true;
+    let renderCount = 0;
+    const markDirty = () => { needsRender = true; };
+
+    // Once the user has driven the camera, automatic reframing stops.
+    let userMovedCamera = false;
+
+    const box = { min: [0, 0, 0], max: [0, 0, 0] };     // current section box
+    const extent = { min: [0, 0, 0], max: [0, 0, 0] };  // slider travel limits
+
+    const joyVector = { x: 0, y: 0 };
+    let elevVector = 0;
+    const keys = Object.create(null);
+
+    // The six half-spaces whose intersection is the section box.
+    const clipPlanes = [
+        new THREE.Plane(new THREE.Vector3(1, 0, 0), 0),
+        new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0),
+        new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
+        new THREE.Plane(new THREE.Vector3(0, -1, 0), 0),
+        new THREE.Plane(new THREE.Vector3(0, 0, 1), 0),
+        new THREE.Plane(new THREE.Vector3(0, 0, -1), 0)
+    ];
+
+    // With renderer.outputEncoding = sRGB, r128 gamma-encodes whatever a
+    // material emits. Authored hex values must therefore be converted to
+    // linear first, or every flat colour comes out washed out.
+    const srgbHex = (hex) => new THREE.Color(hex).convertSRGBToLinear();
+
+    // The minimap draws an architectural floor plan in two passes sharing a
+    // depth buffer. The slice itself is done by the plan camera's NEAR plane
+    // sitting exactly at the cut level — a wall sliced that way exposes its
+    // hollow interior, i.e. its BACK faces:
+    //   - "surf": front faces in light grey — floors and furniture seen from
+    //     above (a vertical wall face is edge-on from the top: invisible).
+    //   - "cut": back faces in near black — exactly the material the plan
+    //     slices through. Same idea as the main view's cap hatching.
+    // The cut level follows the camera target: orbit the building and you
+    // read the mid-level plan; walk into a room and you read that room.
+    const minimapClip = clipPlanes.map((p) => p.clone());
+    const minimapSurfMaterial = new THREE.MeshBasicMaterial({
+        color: srgbHex(0xdde3ea), side: THREE.FrontSide, clippingPlanes: minimapClip
+    });
+    // Pure black: at map scale a wall cut is 1-2 px wide, and antialiasing
+    // averages it with the grey around it — starting from black keeps the
+    // averaged pixel dark enough to still read as a wall.
+    const minimapCutMaterial = new THREE.MeshBasicMaterial({
+        color: srgbHex(0x000000), side: THREE.BackSide, clippingPlanes: minimapClip
+    });
+
+    const raycaster = new THREE.Raycaster();
+    const pointerNdc = new THREE.Vector2();
+    const HIGHLIGHT = srgbHex(0xfacc15);
+
+    const $ = (id) => document.getElementById(id);
+    const phoneMq = window.matchMedia('(max-width: 768px)');
+    const isPhone = () => phoneMq.matches;
+
+    // Adaptive quality. Phones and weak CPUs start without MSAA and with a
+    // lower pixel cap; if frame time still degrades in real use the pixel
+    // ratio is stepped down further at runtime.
+    const lowEnd = isPhone() ||
+        (navigator.hardwareConcurrency > 0 && navigator.hardwareConcurrency <= 4) ||
+        (navigator.deviceMemory > 0 && navigator.deviceMemory <= 4);
+    const maxDpr = () => Math.min(window.devicePixelRatio || 1, lowEnd ? 1 : 2);
+    const DPR_FLOOR = 0.6;
+    let dprCurrent = 1;
+    let frameSamples = [];
+    let lastAdaptAt = 0;
+
+    // ==================================================================
+    // Renderer bootstrap
+    // ==================================================================
+    function initThree() {
+        const container = $('canvas-container');
+
+        scene = new THREE.Scene();
+        scene.background = null;
+        scene.add(mainGroup);
+
+        camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 5000);
+        camera.position.set(100, 100, 100);
+
+        minimapCamera = new THREE.OrthographicCamera(-50, 50, 50, -50, 0.1, 2000);
+        // Looking straight down is a degenerate case for the default +Y up
+        // vector. Pinning up to -Z keeps the plan view stable and north-up.
+        minimapCamera.up.set(0, 0, -1);
+
+        renderer = new THREE.WebGLRenderer({ antialias: !lowEnd, alpha: true, powerPreference: 'high-performance' });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        dprCurrent = maxDpr();
+        renderer.setPixelRatio(dprCurrent);
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        renderer.localClippingEnabled = true;
+        container.appendChild(renderer.domElement);
+
+        scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x1b2130, 0.85));
+        const key = new THREE.DirectionalLight(0xffffff, 0.75);
+        key.position.set(0.6, 1, 0.45);
+        scene.add(key);
+        const fill = new THREE.DirectionalLight(0xdbeafe, 0.28);
+        fill.position.set(-0.7, 0.35, -0.6);
+        scene.add(fill);
+
+        // Section box outline. It carries no clipping planes of its own,
+        // otherwise it would clip itself out of existence.
+        sectionBoxMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.MeshBasicMaterial({ color: srgbHex(0x3b82f6), wireframe: true, transparent: true, opacity: 0.25 })
+        );
+        sectionBoxMesh.visible = false;
+        scene.add(sectionBoxMesh);
+
+        // Walk-to destination beacon: a small pulsing sphere shown only
+        // while the camera glides towards a double-clicked floor point.
+        walkMarker = new THREE.Mesh(
+            new THREE.SphereGeometry(0.25 * UNITS_PER_METER, 16, 12),
+            new THREE.MeshBasicMaterial({ color: srgbHex(0x3b82f6), transparent: true, opacity: 0.85 })
+        );
+        walkMarker.visible = false;
+        scene.add(walkMarker);
+
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.08;
+        controls.addEventListener('change', markDirty);
+        controls.addEventListener('start', () => { userMovedCamera = true; });
+
+        clock = new THREE.Clock();
+
+        buildMinimapOverlay();
+        window.addEventListener('resize', onWindowResize);
+        onWindowResize();
+        setupPointerPicking();
+        setupNavControls();
+        setupPanelUi();
+        setupToolbar();
+
+        renderer.setAnimationLoop(animate);
+    }
+
+    function onWindowResize() {
+        const w = window.innerWidth, h = window.innerHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        dprCurrent = maxDpr();
+        renderer.setPixelRatio(dprCurrent);
+        renderer.setSize(w, h);
+        minimapRect = null; // force recompute
+
+        // The framing depends on the aspect ratio, and the browser resizes the
+        // viewport once more after load. Keep reframing until the user takes
+        // the camera over; after that, never move it behind their back.
+        if (tbvData && !userMovedCamera) fitCamera();
+        markDirty();
+    }
+
+    // ==================================================================
+    // TBV parsing
+    //
+    //   i32 magic 'TBTV' | i32 version | i32 matCount | i32 poolCount
+    //   i32 instCount    | f32[3] sceneMin | f32[3] sceneMax
+    //   materials[]: i32 matId, u8 r, u8 g, u8 b, u8 a
+    //   pool[]:      i32 vertCount, u8 idx16, i32 triCount,
+    //                f32[vc*3] positions, i8[vc*3] normals, idx[tc*3]
+    //   instances[]: i32 meshIdx, i32 elemId, i32 catId, i32 matIdx,
+    //                f32 dx, f32 dy, f32 dz, f32[3] gmin, f32[3] gmax,
+    //                u16 guidLen, u8[guidLen] guid
+    // ==================================================================
+    const TBV_MAGIC = 0x56544254;
+
+    function parseTbv(buffer) {
+        const view = new DataView(buffer);
+        let o = 0;
+
+        const magic = view.getInt32(o, true); o += 4;
+        if (magic !== TBV_MAGIC) throw new Error('Magic number inválido (no es un archivo .tbv).');
+
+        const version = view.getInt32(o, true); o += 4;
+        if (version !== 1) throw new Error('Versión de .tbv no soportada: ' + version);
+
+        const matCount = view.getInt32(o, true); o += 4;
+        const poolCount = view.getInt32(o, true); o += 4;
+        const instCount = view.getInt32(o, true); o += 4;
+
+        const sceneMin = [view.getFloat32(o, true), view.getFloat32(o + 4, true), view.getFloat32(o + 8, true)]; o += 12;
+        const sceneMax = [view.getFloat32(o, true), view.getFloat32(o + 4, true), view.getFloat32(o + 8, true)]; o += 12;
+
+        const materials = new Array(matCount);
+        for (let i = 0; i < matCount; i++) {
+            const matId = view.getInt32(o, true); o += 4;
+            materials[i] = {
+                matId,
+                r: view.getUint8(o++), g: view.getUint8(o++),
+                b: view.getUint8(o++), a: view.getUint8(o++)
+            };
+        }
+
+        const meshes = new Array(poolCount);
+        for (let i = 0; i < poolCount; i++) {
+            const vc = view.getInt32(o, true); o += 4;
+            const idx16 = view.getUint8(o++) === 1;
+            const tc = view.getInt32(o, true); o += 4;
+
+            const positions = new Float32Array(buffer.slice(o, o + vc * 12)); o += vc * 12;
+            const normals = new Int8Array(buffer.slice(o, o + vc * 3)); o += vc * 3;
+
+            const n = tc * 3;
+            let indices;
+            if (idx16) { indices = new Uint16Array(buffer.slice(o, o + n * 2)); o += n * 2; }
+            else { indices = new Uint32Array(buffer.slice(o, o + n * 4)); o += n * 4; }
+
+            meshes[i] = { vc, tc, positions, normals, indices };
+        }
+
+        const decoder = new TextDecoder('utf-8');
+        const instances = new Array(instCount);
+        for (let i = 0; i < instCount; i++) {
+            const meshIdx = view.getInt32(o, true); o += 4;
+            const elemId = view.getInt32(o, true); o += 4;
+            const catId = view.getInt32(o, true); o += 4;
+            const matIdx = view.getInt32(o, true); o += 4;
+            const dx = view.getFloat32(o, true); o += 4;
+            const dy = view.getFloat32(o, true); o += 4;
+            const dz = view.getFloat32(o, true); o += 4;
+            const gmin = [view.getFloat32(o, true), view.getFloat32(o + 4, true), view.getFloat32(o + 8, true)]; o += 12;
+            const gmax = [view.getFloat32(o, true), view.getFloat32(o + 4, true), view.getFloat32(o + 8, true)]; o += 12;
+            const guidLen = view.getUint16(o, true); o += 2;
+            const guid = decoder.decode(new Uint8Array(buffer, o, guidLen)); o += guidLen;
+
+            instances[i] = { meshIdx, elemId, catId, matIdx, dx, dy, dz, gmin, gmax, guid };
+        }
+
+        if (o !== buffer.byteLength) {
+            throw new Error('Archivo truncado: se leyeron ' + o + ' de ' + buffer.byteLength + ' bytes.');
+        }
+        return { version, sceneMin, sceneMax, materials, meshes, instances };
+    }
+
+    // ==================================================================
+    // Scene construction
+    //
+    // The pool holds ~2536 distinct meshes for ~2635 instances, so
+    // InstancedMesh would degenerate into ~2536 single-instance draw
+    // calls. Merging by material instead collapses the model to one draw
+    // call per material (35). The whole model is only ~154k triangles,
+    // so a static merge costs ~3 MB of VRAM and nothing per frame.
+    // ==================================================================
+    function buildScene(data) {
+        disposeScene();
+
+        const { meshes, instances, materials } = data;
+
+        // Bucket instance ids by (material, category). One merged mesh per
+        // bucket keeps draw calls low while letting the category filter work
+        // by toggling mesh.visible — no geometry rebuild when filtering.
+        const byBucket = new Map();
+        for (let i = 0; i < instances.length; i++) {
+            const key = instances[i].matIdx + '|' + instances[i].catId;
+            let list = byBucket.get(key);
+            if (!list) { list = []; byBucket.set(key, list); }
+            list.push(i);
+        }
+
+        const hatchScale = 1 / Math.max(modelSize * 0.015, 1e-3);
+        // One THREE material per Revit material, shared across categories:
+        // 35 materials stay 35 shader programs even with ~60 buckets.
+        const matCache = new Map();
+
+        for (const [key, list] of byBucket) {
+            const matIdx = +key.split('|')[0];
+            const catId = +key.split('|')[1];
+            const matData = materials[matIdx];
+            if (!matData) continue;
+
+            let vTotal = 0, iTotal = 0;
+            for (const gi of list) {
+                const m = meshes[instances[gi].meshIdx];
+                vTotal += m.vc;
+                iTotal += m.indices.length;
+            }
+            if (vTotal === 0 || iTotal === 0) continue;
+
+            const positions = new Float32Array(vTotal * 3);
+            const normals = new Int8Array(vTotal * 3);
+            const indices = new Uint32Array(iTotal);
+
+            // faceRanges lets a picked faceIndex be mapped back to its
+            // instance without uploading a per-vertex attribute.
+            const faceStart = new Uint32Array(list.length);
+            const faceOwner = new Uint32Array(list.length);
+
+            let vo = 0, io = 0;
+            for (let k = 0; k < list.length; k++) {
+                const gi = list[k];
+                const inst = instances[gi];
+                const m = meshes[inst.meshIdx];
+
+                faceStart[k] = io / 3;
+                faceOwner[k] = gi;
+
+                const src = m.positions;
+                for (let v = 0; v < m.vc; v++) {
+                    const s = v * 3, d = (vo + v) * 3;
+                    positions[d] = src[s] + inst.dx;
+                    positions[d + 1] = src[s + 1] + inst.dy;
+                    positions[d + 2] = src[s + 2] + inst.dz;
+                }
+                normals.set(m.normals, vo * 3);
+
+                const mi = m.indices;
+                for (let t = 0; t < mi.length; t++) indices[io + t] = mi[t] + vo;
+
+                vo += m.vc;
+                io += mi.length;
+            }
+
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3, true));
+            geo.setIndex(new THREE.BufferAttribute(indices, 1));
+            geo.computeBoundingSphere();
+            geo.computeBoundingBox();
+
+            const isGlass = esVidrio(matData, catId);
+            const cacheKey = matIdx + (isGlass ? 'g' : 'o');
+            let material = matCache.get(cacheKey);
+            if (!material) {
+                material = makeMaterial(matData, isGlass, hatchScale);
+                matCache.set(cacheKey, material);
+            }
+
+            const mesh = new THREE.Mesh(geo, material);
+            mesh.frustumCulled = false; // one mesh spans the whole building
+            mesh.renderOrder = isGlass ? 1 : 0;
+            mesh.userData = { matIdx, catId, isGlass, faceStart, faceOwner };
+
+            mainGroup.add(mesh);
+            meshParts.push(mesh);
+        }
+
+        CategoryFilter.rebuildMenu();
+        CategoryFilter.apply();
+    }
+
+    // A material is glass when the exporter said so (alpha < 255), or when
+    // an opaque near-black material is used by glazing-prone categories:
+    // those are panes whose appearance asset never reached the exporter, and
+    // painting them solid black reads as "broken window". In this model most
+    // panes live in category 0 (sub-elements exported without a category).
+    const CAT_WINDOWS = -2000014;
+    const GLASSY_CATS = new Set([CAT_WINDOWS, -2000023 /* Puertas */, 0 /* sin categoría */]);
+
+    function esVidrio(matData, catId) {
+        if (matData.a < 255) return true;
+        return GLASSY_CATS.has(catId) && matData.r < 70 && matData.g < 70 && matData.b < 70;
+    }
+
+    function srgbColor(r, g, b) {
+        // r128 has no colour management: convert manually so that
+        // outputEncoding = sRGB round-trips the authored values.
+        const c = new THREE.Color(r / 255, g / 255, b / 255);
+        return c.convertSRGBToLinear();
+    }
+
+    function makeMaterial(matData, isGlass, hatchScale) {
+        let { r, g, b } = matData;
+
+        if (isGlass) {
+            // Revit often reports near-black for glazing; give it a tint.
+            if (r < 64 && g < 64 && b < 64) { r = 165; g = 205; b = 235; }
+            // Clamp the opacity to a band where glass is unmistakably glass:
+            // below 0.30 thin panes vanish against dark interiors, above 0.55
+            // they read as solid painted panels.
+            const mat = new THREE.MeshPhongMaterial({
+                color: srgbColor(r, g, b),
+                side: THREE.DoubleSide,
+                clippingPlanes: clipPlanes,
+                transparent: true,
+                opacity: THREE.MathUtils.clamp(matData.a / 255, 0.30, 0.55),
+                depthWrite: false,
+                shininess: 90,
+                specular: 0x555555
+            });
+            mat.userData = { isGlass: true };
+            return mat;
+        }
+
+        // Lambert, not Phong, for the bulk of the building: the per-fragment
+        // specular term is the most expensive part of Phong on mobile GPUs,
+        // and walls, floors and slabs have no visible highlight anyway.
+        const mat = new THREE.MeshLambertMaterial({
+            color: srgbColor(r, g, b),
+            side: THREE.DoubleSide,
+            clippingPlanes: clipPlanes
+        });
+        mat.userData = { isGlass: false };
+
+        // Cap hatching: any back face that survives clipping is an
+        // interior surface exposed by the section cut. Fill it with a
+        // 45-degree hatch so solids do not read as hollow shells.
+        mat.onBeforeCompile = (shader) => {
+            shader.uniforms.uHatchScale = { value: hatchScale };
+
+            shader.vertexShader = 'varying vec3 vHatchPos;\n' + shader.vertexShader.replace(
+                '#include <project_vertex>',
+                '#include <project_vertex>\n\tvHatchPos = (modelMatrix * vec4(transformed, 1.0)).xyz;'
+            );
+
+            shader.fragmentShader =
+                'varying vec3 vHatchPos;\nuniform float uHatchScale;\n' +
+                shader.fragmentShader.replace(
+                    '#include <clipping_planes_fragment>',
+                    `#include <clipping_planes_fragment>
+                    if ( ! gl_FrontFacing ) {
+                        float band = fract((vHatchPos.x + vHatchPos.y + vHatchPos.z) * uHatchScale);
+                        gl_FragColor = vec4(band > 0.5 ? vec3(0.42) : vec3(0.20), 1.0);
+                        return;
+                    }`
+                );
+        };
+        return mat;
+    }
+
+    function disposeScene() {
+        for (const m of meshParts) {
+            m.geometry.dispose();
+            m.material.dispose();  // shared materials: dispose is idempotent
+            mainGroup.remove(m);
+        }
+        meshParts = [];
+        clearHighlight();
+        Measure.clear();           // stale dimensions point at the old model
+    }
+
+    // ==================================================================
+    // Section box
+    // ==================================================================
+    function setupSliders(min, max) {
+        ['x', 'y', 'z'].forEach((ax, i) => {
+            const pad = (max[i] - min[i]) * 0.02 || 1;
+            extent.min[i] = min[i] - pad;
+            extent.max[i] = max[i] + pad;
+
+            const lo = $('clip-' + ax + '-min');
+            const hi = $('clip-' + ax + '-max');
+            const step = (extent.max[i] - extent.min[i]) / 500;
+
+            for (const el of [lo, hi]) {
+                el.min = extent.min[i];
+                el.max = extent.max[i];
+                el.step = step;
+            }
+            lo.value = extent.min[i];
+            hi.value = extent.max[i];
+
+            // Keep the two thumbs from crossing each other.
+            lo.oninput = () => {
+                if (parseFloat(lo.value) > parseFloat(hi.value)) lo.value = hi.value;
+                boxDirty = true;
+            };
+            hi.oninput = () => {
+                if (parseFloat(hi.value) < parseFloat(lo.value)) hi.value = lo.value;
+                boxDirty = true;
+            };
+        });
+        boxDirty = true;
+    }
+
+    function resetSliders() {
+        ['x', 'y', 'z'].forEach((ax, i) => {
+            $('clip-' + ax + '-min').value = extent.min[i];
+            $('clip-' + ax + '-max').value = extent.max[i];
+        });
+        boxDirty = true;
+    }
+
+    function readSliders() {
+        ['x', 'y', 'z'].forEach((ax, i) => {
+            box.min[i] = parseFloat($('clip-' + ax + '-min').value);
+            box.max[i] = parseFloat($('clip-' + ax + '-max').value);
+        });
+    }
+
+    function applyBox() {
+        if (!tbvData) return;
+        readSliders();
+
+        // A plane keeps the half-space where dot(normal, p) >= constant... in
+        // three.js a fragment survives while dot(normal, p) + constant >= 0.
+        // For +X with normal (1,0,0): x - min >= 0  =>  constant = -min.
+        clipPlanes[0].constant = -box.min[0];
+        clipPlanes[1].constant = box.max[0];
+        clipPlanes[2].constant = -box.min[1];
+        clipPlanes[3].constant = box.max[1];
+        clipPlanes[4].constant = -box.min[2];
+        clipPlanes[5].constant = box.max[2];
+
+        const sx = box.max[0] - box.min[0];
+        const sy = box.max[1] - box.min[1];
+        const sz = box.max[2] - box.min[2];
+
+        const cut = sx < (extent.max[0] - extent.min[0]) - 1e-4 ||
+                    sy < (extent.max[1] - extent.min[1]) - 1e-4 ||
+                    sz < (extent.max[2] - extent.min[2]) - 1e-4;
+
+        sectionBoxMesh.visible = cut && sx > 0 && sy > 0 && sz > 0;
+        sectionBoxMesh.position.set((box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2);
+        sectionBoxMesh.scale.set(Math.max(sx, 1e-3), Math.max(sy, 1e-3), Math.max(sz, 1e-3));
+
+        // Selection may have just been cut away.
+        if (selectedId !== null && !instanceIntersectsBox(tbvData.instances[selectedId])) closeInfo();
+
+        ['x', 'y', 'z'].forEach((ax, i) => {
+            $('lbl-' + ax).textContent = box.min[i].toFixed(1) + ' … ' + box.max[i].toFixed(1);
+        });
+
+        updateMinimapClip();
+        updateMinimapOverlay();
+        updateStats();
+    }
+
+    function instanceIntersectsBox(inst) {
+        return !(inst.gmax[0] < box.min[0] || inst.gmin[0] > box.max[0] ||
+                 inst.gmax[1] < box.min[1] || inst.gmin[1] > box.max[1] ||
+                 inst.gmax[2] < box.min[2] || inst.gmin[2] > box.max[2]);
+    }
+
+    function pointInBox(p, eps) {
+        return p.x >= box.min[0] - eps && p.x <= box.max[0] + eps &&
+               p.y >= box.min[1] - eps && p.y <= box.max[1] + eps &&
+               p.z >= box.min[2] - eps && p.z <= box.max[2] + eps;
+    }
+
+    function countVisible() {
+        let n = 0;
+        for (const inst of tbvData.instances) {
+            if (CategoryFilter.hidden.has(inst.catId)) continue;
+            if (instanceIntersectsBox(inst)) n++;
+        }
+        return n;
+    }
+
+    // Raycast targets: only parts the filter keeps on screen. Three's
+    // raycaster does not check .visible on its own.
+    function visibleParts() {
+        return meshParts.filter((m) => m.visible);
+    }
+
+    const mainPassStats = { calls: 0, triangles: 0 };
+
+    function updateStats() {
+        if (!tbvData) return;
+        $('render-stats').innerHTML =
+            row('Elementos visibles', countVisible().toLocaleString('es') + ' / ' + tbvData.instances.length.toLocaleString('es')) +
+            row('Draw calls', mainPassStats.calls.toLocaleString('es')) +
+            row('Triángulos', mainPassStats.triangles.toLocaleString('es')) +
+            row('Materiales', meshParts.length.toLocaleString('es'));
+    }
+    const row = (k, v) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+
+    // ==================================================================
+    // MODULE: CategoryFilter — dropdown to hide/isolate Revit categories.
+    //
+    // The scene is merged per (material, category), so filtering is just a
+    // visibility flag per merged mesh: zero geometry work, zero extra RAM.
+    // ==================================================================
+    const CATEGORY_NAMES = {
+        '-2000011': 'Muros', '-2000032': 'Suelos', '-2000035': 'Techos',
+        '-2000023': 'Puertas', '-2000014': 'Ventanas', '-2001330': 'Columnas',
+        '-2001320': 'Vigas', '-2000080': 'Mobiliario', '-2001160': 'Sanitarios'
+    };
+    const catName = (id) => CATEGORY_NAMES[String(id)] || ('Categoría ' + id);
+
+    const CategoryFilter = {
+        hidden: new Set(),
+
+        cats() {
+            const ids = new Set();
+            for (const m of meshParts) ids.add(m.userData.catId);
+            return [...ids].sort((a, b) => catName(a).localeCompare(catName(b)));
+        },
+
+        apply() {
+            for (const m of meshParts) m.visible = !this.hidden.has(m.userData.catId);
+            const active = this.hidden.size > 0;
+            $('tool-reset-filter').style.display = active ? 'flex' : 'none';
+            $('tool-filter').classList.toggle('tool-active', active);
+            // Selection may have just been filtered away.
+            if (selectedId !== null && this.hidden.has(tbvData.instances[selectedId].catId)) closeInfo();
+            this.syncMenu();
+            updateStats();
+            markDirty();
+        },
+
+        toggle(catId, on) {
+            if (on) this.hidden.delete(catId); else this.hidden.add(catId);
+            this.apply();
+        },
+
+        isolate(catId) {
+            this.hidden = new Set(this.cats().filter((c) => c !== catId));
+            this.apply();
+        },
+
+        reset() {
+            this.hidden.clear();
+            this.apply();
+        },
+
+        rebuildMenu() {
+            const menu = $('cat-menu');
+            menu.innerHTML = '<div class="cat-head">Categorías <span class="cat-hint">nombre = aislar</span></div>';
+            for (const id of this.cats()) {
+                const rowEl = document.createElement('div');
+                rowEl.className = 'cat-row';
+                rowEl.dataset.cat = id;
+
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = !this.hidden.has(id);
+                cb.addEventListener('change', () => this.toggle(id, cb.checked));
+
+                const name = document.createElement('span');
+                name.className = 'cat-name';
+                name.textContent = catName(id);
+                name.addEventListener('click', () => this.isolate(id));
+
+                rowEl.appendChild(cb);
+                rowEl.appendChild(name);
+                menu.appendChild(rowEl);
+            }
+            const reset = document.createElement('button');
+            reset.className = 'btn cat-reset';
+            reset.textContent = 'Restablecer todo';
+            reset.addEventListener('click', () => this.reset());
+            menu.appendChild(reset);
+        },
+
+        syncMenu() {
+            for (const rowEl of document.querySelectorAll('#cat-menu .cat-row')) {
+                const id = +rowEl.dataset.cat;
+                rowEl.querySelector('input').checked = !this.hidden.has(id);
+                rowEl.classList.toggle('cat-off', this.hidden.has(id));
+            }
+        },
+
+        toggleMenu() {
+            const menu = $('cat-menu');
+            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+        }
+    };
+
+    // ==================================================================
+    // Minimap
+    // ==================================================================
+    function buildMinimapOverlay() {
+        minimapScene = new THREE.Scene();
+
+        // Camera marker: a triangle in the XZ plane pointing at -Z.
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+            0, 0, -1.6,
+            -1.0, 0, 1.0,
+            1.0, 0, 1.0
+        ]), 3));
+        minimapMarker = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+            color: srgbHex(0xef4444), side: THREE.DoubleSide, depthTest: false, transparent: true
+        }));
+        minimapMarker.renderOrder = 2;
+        minimapScene.add(minimapMarker);
+
+        // Outline of the section box footprint.
+        const rectGeo = new THREE.BufferGeometry();
+        rectGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(15), 3));
+        minimapScene.userData.rect = new THREE.Line(rectGeo, new THREE.LineBasicMaterial({
+            color: srgbHex(0x2563eb), depthTest: false, transparent: true, opacity: 0.9
+        }));
+        minimapScene.userData.rect.renderOrder = 1;
+        minimapScene.add(minimapScene.userData.rect);
+    }
+
+    // Recomputed on every minimap render: the cut level tracks the camera
+    // target, which moves without the section box changing. Returns the Y
+    // at which the plan camera's near plane must slice.
+    function updateMinimapClip() {
+        if (!tbvData) return 0;
+        for (let i = 0; i < 6; i++) minimapClip[i].constant = clipPlanes[i].constant;
+        return THREE.MathUtils.clamp(
+            controls.target.y,
+            box.min[1] + 0.30 * UNITS_PER_METER,
+            box.max[1]
+        );
+    }
+
+    function updateMinimapOverlay() {
+        if (!tbvData) return;
+        const y = extent.max[1] + modelSize * 0.5;
+        const [x0, , z0] = box.min;
+        const [x1, , z1] = box.max;
+
+        const rect = minimapScene.userData.rect;
+        const p = rect.geometry.attributes.position;
+        p.setXYZ(0, x0, y, z0);
+        p.setXYZ(1, x1, y, z0);
+        p.setXYZ(2, x1, y, z1);
+        p.setXYZ(3, x0, y, z1);
+        p.setXYZ(4, x0, y, z0);
+        p.needsUpdate = true;
+        rect.geometry.computeBoundingSphere();
+    }
+
+    const markerDir = new THREE.Vector3();
+
+    // Called on every frame that renders. It cannot be throttled: the main
+    // pass clears the whole canvas, so skipping the minimap for even one
+    // frame would expose the 3D scene through its rectangle.
+    function renderMinimap() {
+        const boxEl = $('minimap-box');
+        if (!tbvData || boxEl.offsetParent === null) return;
+
+        if (!minimapRect) minimapRect = boxEl.getBoundingClientRect();
+        const r = minimapRect;
+        const vy = window.innerHeight - r.bottom;
+        const clamp = THREE.MathUtils.clamp;
+
+        const fullHalf = Math.max(
+            (tbvData.sceneMax[0] - tbvData.sceneMin[0]),
+            (tbvData.sceneMax[2] - tbvData.sceneMin[2])
+        ) * 0.55;
+
+        // Adaptive zoom: walking inside the building, a whole-site plan is
+        // unreadable (walls are subpixel). Zoom to apartment scale, centred
+        // on the camera, and the walls become 2 px lines you can navigate by.
+        const insideXZ =
+            camera.position.x > box.min[0] && camera.position.x < box.max[0] &&
+            camera.position.z > box.min[2] && camera.position.z < box.max[2];
+        const half = insideXZ ? Math.min(fullHalf, 7.5 * UNITS_PER_METER) : fullHalf;
+        const cx = insideXZ
+            ? clamp(camera.position.x, modelCenter.x - fullHalf + half, modelCenter.x + fullHalf - half)
+            : modelCenter.x;
+        const cz = insideXZ
+            ? clamp(camera.position.z, modelCenter.z - fullHalf + half, modelCenter.z + fullHalf - half)
+            : modelCenter.z;
+
+        const cutY = updateMinimapClip();
+        const camY = extent.max[1] + modelSize;
+
+        minimapCamera.left = -half; minimapCamera.right = half;
+        minimapCamera.top = half; minimapCamera.bottom = -half;
+        // The NEAR plane sits exactly at the cut level: it is what slices
+        // the walls open for the plan (see the material comments above).
+        minimapCamera.near = camY - cutY;
+        minimapCamera.far = camY - box.min[1] + modelSize;
+        minimapCamera.position.set(cx, camY, cz);
+        minimapCamera.lookAt(cx, extent.max[1], cz);
+        minimapCamera.updateProjectionMatrix();
+
+        // Marker follows the live camera position and heading. When the
+        // camera orbits outside the plan bounds it is pinned to the edge of
+        // the map rather than disappearing, so it always shows where you are
+        // looking from.
+        const mk = half * 0.045;
+        const inset = mk * 1.8;
+        camera.getWorldDirection(markerDir);
+        minimapMarker.position.set(
+            clamp(camera.position.x, cx - half + inset, cx + half - inset),
+            extent.max[1] + modelSize * 0.5,
+            clamp(camera.position.z, cz - half + inset, cz + half - inset)
+        );
+        minimapMarker.scale.setScalar(mk);
+        minimapMarker.rotation.y = Math.atan2(-markerDir.x, -markerDir.z);
+
+        renderer.setViewport(r.left, vy, r.width, r.height);
+        renderer.setScissor(r.left, vy, r.width, r.height);
+        renderer.setScissorTest(true);
+
+        const boxWasVisible = sectionBoxMesh.visible;
+        const beaconWasVisible = walkMarker.visible;
+        sectionBoxMesh.visible = false;
+        walkMarker.visible = false;
+        if (highlightMesh) highlightMesh.visible = false;
+
+        // Pass 1: top-down surfaces (front faces) in light grey on white.
+        scene.overrideMaterial = minimapSurfMaterial;
+        renderer.setClearColor(0xffffff, 1);
+        renderer.render(scene, minimapCamera);
+
+        // Pass 2: back faces in near black, sharing the depth buffer. Inside
+        // a wall sliced by the near plane, the nearest surface is a back
+        // face, so the wall's whole footprint wins the depth test and reads
+        // as a solid black cut.
+        renderer.autoClear = false;
+        scene.overrideMaterial = minimapCutMaterial;
+        renderer.render(scene, minimapCamera);
+        scene.overrideMaterial = null;
+
+        // Pass 3: overlay (camera marker + section rect). The overlay lives
+        // above the cut level, so the near plane has to retreat for it.
+        minimapCamera.near = 0.1;
+        minimapCamera.updateProjectionMatrix();
+        renderer.render(minimapScene, minimapCamera);
+        renderer.autoClear = true;
+
+        sectionBoxMesh.visible = boxWasVisible;
+        walkMarker.visible = beaconWasVisible;
+        if (highlightMesh) highlightMesh.visible = true;
+        renderer.setScissorTest(false);
+        renderer.setClearColor(0x000000, 0);
+
+        if (pendingSample) { const fn = pendingSample; pendingSample = null; fn(readMinimapPixels(r)); }
+    }
+
+    let pendingSample = null;
+
+    function readMinimapPixels(r) {
+        const gl = renderer.getContext();
+        const dpr = renderer.getPixelRatio();
+        // Inset past the 1px DOM border so only painted plan pixels count.
+        const x = Math.round((r.left + 2) * dpr);
+        const y = Math.round((window.innerHeight - r.bottom + 2) * dpr);
+        const w = Math.max(1, Math.round((r.width - 4) * dpr));
+        const h = Math.max(1, Math.round((r.height - 4) * dpr));
+
+        const px = new Uint8Array(w * h * 4);
+        gl.readPixels(x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+
+        let white = 0, dark = 0, gray = 0, red = 0, blue = 0;
+        const total = w * h;
+        const hist = new Map();
+        for (let i = 0; i < total; i++) {
+            const R = px[i * 4], G = px[i * 4 + 1], B = px[i * 4 + 2];
+            if (R > 235 && G > 235 && B > 235) white++;              // background
+            // Cut walls are pure black, but antialiasing mixes 1-2 px lines
+            // with the grey around them: anything clearly darker than the
+            // surface grey counts as cut.
+            else if (R < 150 && G < 155 && B < 165) dark++;
+            else if (R > 150 && G > 150 && B > 150) gray++;          // top-down surfaces
+            // A bluish pixel is one where blue clearly dominates the other
+            // two channels; the exact tint depends on line AA and blending.
+            if (B > 120 && B - R > 60 && B - G > 40) blue++;
+            // Likewise a reddish pixel: red clearly dominates.
+            if (R > 120 && R - G > 60 && R - B > 60) red++;
+
+            const key = ((R >> 4) << 8) | ((G >> 4) << 4) | (B >> 4);
+            hist.set(key, (hist.get(key) || 0) + 1);
+        }
+        const top = [...hist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+            .map(([k, n]) => [((k >> 8) & 15) * 17, ((k >> 4) & 15) * 17, (k & 15) * 17, n]);
+
+        return { total, white: white / total, dark: dark / total, gray: gray / total, redPixels: red, bluePixels: blue, top };
+    }
+
+    // ==================================================================
+    // Navigation: joystick, elevation buttons, keyboard
+    // ==================================================================
+    function setupNavControls() {
+        // The joystick and elevation buttons work with a mouse just as well
+        // as with a finger, so they are always on.
+        showTouchUi();
+
+        const zone = $('joystick-container');
+        const knob = $('joystick-knob');
+        let activePointer = null;
+
+        // The travel radius has to follow the element, not a magic number:
+        // the joystick is 140px on desktop and 108px on phones.
+        const maxDist = () => (zone.clientWidth - knob.clientWidth) / 2;
+
+        function moveKnob(e) {
+            const r = zone.getBoundingClientRect();
+            let dx = e.clientX - (r.left + r.width / 2);
+            let dy = e.clientY - (r.top + r.height / 2);
+
+            const max = maxDist();
+            const dist = Math.hypot(dx, dy);
+            if (dist > max) { dx = (dx / dist) * max; dy = (dy / dist) * max; }
+
+            knob.style.transform = `translate(${dx}px, ${dy}px)`;
+            markDirty();
+
+            const dead = 0.12;
+            let nx = dx / max, ny = dy / max;
+            const mag = Math.hypot(nx, ny);
+            if (mag < dead) { joyVector.x = 0; joyVector.y = 0; return; }
+            // Re-map past the dead zone and ease in, so small pushes are precise.
+            const scaled = Math.pow((mag - dead) / (1 - dead), 1.6) / mag;
+            joyVector.x = nx * scaled;
+            joyVector.y = ny * scaled;
+        }
+
+        function releaseKnob() {
+            activePointer = null;
+            zone.classList.remove('active');
+            knob.style.transform = 'translate(0px, 0px)';
+            joyVector.x = 0; joyVector.y = 0;
+        }
+
+        zone.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            activePointer = e.pointerId;
+            zone.setPointerCapture(e.pointerId);
+            zone.classList.add('active');
+            moveKnob(e);
+        });
+        zone.addEventListener('pointermove', (e) => {
+            if (e.pointerId === activePointer) moveKnob(e);
+        });
+        for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+            zone.addEventListener(ev, (e) => { if (e.pointerId === activePointer) releaseKnob(); });
+        }
+
+        bindHold($('btn-up'), 1);
+        bindHold($('btn-down'), -1);
+
+        window.addEventListener('keydown', (e) => { keys[e.code] = true; markDirty(); });
+        window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+        window.addEventListener('blur', () => {
+            for (const k in keys) keys[k] = false;
+            elevVector = 0;
+            releaseKnob();
+        });
+    }
+
+    function showTouchUi() {
+        $('joystick-container').style.display = 'block';
+        $('elev-controls').style.display = 'flex';
+    }
+
+    function bindHold(el, value) {
+        const press = (e) => {
+            e.preventDefault();
+            el.setPointerCapture(e.pointerId);
+            el.classList.add('pressed');
+            elevVector = value;
+            markDirty();
+        };
+        const release = () => { el.classList.remove('pressed'); elevVector = 0; };
+        el.addEventListener('pointerdown', press);
+        for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) el.addEventListener(ev, release);
+    }
+
+    const moveDir = new THREE.Vector3();
+    const moveRight = new THREE.Vector3();
+    const moveDelta = new THREE.Vector3();
+    const UP = new THREE.Vector3(0, 1, 0);
+
+    // ------------------------------------------------------------------
+    // Walk-to: double click / double tap on a floor teleports the camera
+    // there at eye level, keeping the current heading.
+    //
+    // The model is in Revit internal units (decimal feet — the exporter
+    // writes XYZ straight from the API), so metres are converted here.
+    // ------------------------------------------------------------------
+    const UNITS_PER_METER = 3.28084;
+    const EYE_HEIGHT = 1.60 * UNITS_PER_METER;
+
+    const walk = {
+        active: false, t0: 0, durMs: 850,   // a calm glide, but under one second
+        fromPos: new THREE.Vector3(), fromTgt: new THREE.Vector3(),
+        toPos: new THREE.Vector3(), toTgt: new THREE.Vector3()
+    };
+
+    // Stops the glide and hides the destination beacon, whatever the cause:
+    // arrival, grabbing the scene, or manual movement input.
+    function cancelWalk() {
+        if (!walk.active && !(walkMarker && walkMarker.visible)) return;
+        walk.active = false;
+        if (walkMarker) walkMarker.visible = false;
+        markDirty();
+    }
+
+    // Returns true when a walkable (mostly horizontal, opaque, not clipped
+    // away) surface sits under the given screen point. With probeOnly it
+    // only answers the question; otherwise it starts the glide.
+    function walkTo(clientX, clientY, probeOnly) {
+        if (!ready) return false;
+
+        pointerNdc.x = (clientX / window.innerWidth) * 2 - 1;
+        pointerNdc.y = -(clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(pointerNdc, camera);
+
+        const hits = raycaster.intersectObjects(visibleParts(), false);
+        const eps = modelSize * 1e-4;
+
+        for (const hit of hits) {
+            if (hit.object.userData.isGlass) continue;   // glass is not a floor
+            if (!pointInBox(hit.point, eps)) continue;    // cut away by the section box
+            // Merged meshes carry no transform, so the geometric face normal
+            // is already in world space. Only near-horizontal faces qualify:
+            // double-clicking a wall must not fling the camera through it.
+            if (hit.face.normal.y < 0.55) return false;
+            if (!probeOnly) startWalk(hit.point);
+            return true;
+        }
+        return false;
+    }
+
+    function startWalk(p) {
+        closeInfo();
+        walk.fromPos.copy(camera.position);
+        walk.fromTgt.copy(controls.target);
+        walk.toPos.set(p.x, p.y + EYE_HEIGHT, p.z);
+
+        // Keep the current horizontal heading: land looking the same way.
+        camera.getWorldDirection(moveDir);
+        moveDir.y = 0;
+        if (moveDir.lengthSq() < 1e-8) moveDir.set(0, 0, -1);
+        moveDir.normalize();
+        walk.toTgt.copy(walk.toPos).addScaledVector(moveDir, Math.max(EYE_HEIGHT * 2, modelSize * 0.02));
+
+        // Beacon on the clicked spot, half-sunk so it hugs the floor.
+        walkMarker.position.set(p.x, p.y + 0.10 * UNITS_PER_METER, p.z);
+        walkMarker.scale.setScalar(1);
+        walkMarker.visible = true;
+
+        walk.t0 = performance.now();
+        walk.active = true;
+        markDirty();
+    }
+
+    // Advances the glide; returns true while the camera is still moving.
+    // Wall-clock driven, not frame driven: on a low-end phone dropping
+    // frames the glide still lands in exactly durMs, it just samples the
+    // curve at fewer points.
+    function updateWalk() {
+        if (!walk.active) return false;
+        const t = Math.min((performance.now() - walk.t0) / walk.durMs, 1);
+        // easeInOutQuad: gentle start and landing, no damping fight.
+        const k = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        camera.position.lerpVectors(walk.fromPos, walk.toPos, k);
+        controls.target.lerpVectors(walk.fromTgt, walk.toTgt, k);
+        // Soft pulse so the beacon reads as "destination", not geometry.
+        walkMarker.scale.setScalar(1 + 0.18 * Math.sin(t * Math.PI * 4));
+        if (t >= 1) { userMovedCamera = true; cancelWalk(); }
+        return true;
+    }
+
+    // Returns true when the camera actually moved this frame.
+    function updateMovement(dt) {
+        let sx = joyVector.x;
+        let sz = -joyVector.y;
+        let sy = elevVector;
+
+        if (keys['KeyW'] || keys['ArrowUp']) sz += 1;
+        if (keys['KeyS'] || keys['ArrowDown']) sz -= 1;
+        if (keys['KeyD'] || keys['ArrowRight']) sx += 1;
+        if (keys['KeyA'] || keys['ArrowLeft']) sx -= 1;
+        if (keys['KeyE'] || keys['Space']) sy += 1;
+        if (keys['KeyQ']) sy -= 1;
+
+        if (sx === 0 && sy === 0 && sz === 0) return false;
+
+        cancelWalk();  // manual input takes over from any glide
+
+        // Speed follows the model's scale, and time, not the frame rate.
+        let speed = modelSize * 0.28 * dt;
+        if (keys['ShiftLeft'] || keys['ShiftRight']) speed *= 3;
+
+        camera.getWorldDirection(moveDir);
+        moveDir.y = 0;
+        if (moveDir.lengthSq() < 1e-8) moveDir.set(0, 0, -1);
+        moveDir.normalize();
+        moveRight.crossVectors(moveDir, UP).normalize();
+
+        moveDelta.set(0, 0, 0)
+            .addScaledVector(moveRight, sx * speed)
+            .addScaledVector(moveDir, sz * speed);
+        moveDelta.y += sy * speed;
+
+        camera.position.add(moveDelta);
+        controls.target.add(moveDelta);
+        userMovedCamera = true;
+        return true;
+    }
+
+    // ==================================================================
+    // MODULE: Measure — dimension tools.
+    //
+    //   'two'  : click corner A, click corner B -> one dimension.
+    //   'rays' : click one point -> rays in ±X ±Y ±Z, one dimension per
+    //            surface hit (room width/depth/height from a single tap).
+    //
+    // Lines render with depthTest off; the numbers are DOM chips projected
+    // every rendered frame, so they stay readable at any angle and cost no
+    // GPU text rendering (important on low-end phones).
+    // ==================================================================
+    const Measure = {
+        mode: 'none',
+        ptA: null,
+        dims: [],            // { line, labelEl, mid }
+        _proj: new THREE.Vector3(),
+        _lineMat: null,
+
+        setMode(mode) {
+            const next = this.mode === mode ? 'none' : mode;
+            this.clear();
+            this.mode = next;
+            $('tool-measure').classList.toggle('tool-active', next === 'two');
+            $('tool-rays').classList.toggle('tool-active', next === 'rays');
+        },
+
+        // First surface hit inside the section box, glass included: a ray
+        // aimed at a window should measure to the window.
+        surfacePoint(clientX, clientY) {
+            pointerNdc.x = (clientX / window.innerWidth) * 2 - 1;
+            pointerNdc.y = -(clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(pointerNdc, camera);
+            const eps = modelSize * 1e-4;
+            for (const hit of raycaster.intersectObjects(visibleParts(), false)) {
+                if (pointInBox(hit.point, eps)) return hit.point.clone();
+            }
+            return null;
+        },
+
+        click(clientX, clientY) {
+            const p = this.surfacePoint(clientX, clientY);
+            if (!p) return;
+
+            if (this.mode === 'two') {
+                if (!this.ptA) {
+                    this.ptA = p;
+                    this._pending = this.addLabel('A');
+                    this._pending.mid = p;
+                    markDirty();
+                } else {
+                    if (this._pending) { this._pending.labelEl.remove(); this._pending = null; }
+                    this.addDim(this.ptA, p);
+                    this.ptA = null;
+                }
+            } else if (this.mode === 'rays') {
+                const dirs = [
+                    new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+                    new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
+                    new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)
+                ];
+                for (const dir of dirs) {
+                    const hit = this.castRay(p, dir);
+                    if (hit) this.addDim(p, hit);
+                }
+            }
+        },
+
+        castRay(origin, dir) {
+            // Start a hair away from the clicked surface so the ray does not
+            // immediately re-hit it at distance zero.
+            const eps = 0.02 * UNITS_PER_METER;
+            raycaster.set(origin.clone().addScaledVector(dir, eps), dir);
+            raycaster.far = modelSize * 2;
+            const boxEps = modelSize * 1e-4;
+            let found = null;
+            for (const hit of raycaster.intersectObjects(visibleParts(), false)) {
+                if (!pointInBox(hit.point, boxEps)) continue;
+                found = hit.point.clone();
+                break;
+            }
+            raycaster.far = Infinity;
+            return found;
+        },
+
+        addDim(a, b) {
+            const meters = a.distanceTo(b) / UNITS_PER_METER;
+            if (meters < 0.01) return;
+
+            if (!this._lineMat) {
+                this._lineMat = new THREE.LineBasicMaterial({
+                    color: srgbHex(0xfacc15), depthTest: false, transparent: true, opacity: 0.95
+                });
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+                a.x, a.y, a.z, b.x, b.y, b.z
+            ]), 3));
+            const line = new THREE.Line(geo, this._lineMat);
+            line.renderOrder = 3;
+            line.frustumCulled = false;
+            scene.add(line);
+
+            const dim = this.addLabel(meters.toFixed(2).replace('.', ',') + ' m');
+            dim.line = line;
+            dim.mid = a.clone().add(b).multiplyScalar(0.5);
+            markDirty();
+        },
+
+        addLabel(text) {
+            const el = document.createElement('div');
+            el.className = 'dim-label';
+            el.textContent = text;
+            $('dim-labels').appendChild(el);
+            const dim = { line: null, labelEl: el, mid: null };
+            this.dims.push(dim);
+            return dim;
+        },
+
+        // Re-projects every label chip. Runs only on frames that render.
+        updateLabels() {
+            if (this.dims.length === 0) return;
+            for (const d of this.dims) {
+                if (!d.mid) continue;
+                this._proj.copy(d.mid).project(camera);
+                const visible = this._proj.z < 1;
+                d.labelEl.style.display = visible ? 'block' : 'none';
+                if (visible) {
+                    d.labelEl.style.left = ((this._proj.x * 0.5 + 0.5) * window.innerWidth) + 'px';
+                    d.labelEl.style.top = ((-this._proj.y * 0.5 + 0.5) * window.innerHeight) + 'px';
+                }
+            }
+        },
+
+        clear() {
+            for (const d of this.dims) {
+                if (d.line) { scene.remove(d.line); d.line.geometry.dispose(); }
+                d.labelEl.remove();
+            }
+            this.dims = [];
+            this.ptA = null;
+            this._pending = null;
+            markDirty();
+        }
+    };
+
+    // ==================================================================
+    // MODULE: Gyro — orient the camera with the phone's gyroscope.
+    //
+    // Standard deviceorientation -> quaternion mapping (same maths as the
+    // old three.js DeviceOrientationControls). While active, OrbitControls
+    // is suspended; the joystick still moves the position. "Calibrar norte"
+    // re-aims the current physical heading at the camera's current view.
+    // ==================================================================
+    const Gyro = {
+        active: false,
+        data: null,
+        headingOffset: 0,
+        _needCalib: false,
+        _euler: new THREE.Euler(),
+        _q0: new THREE.Quaternion(),
+        _q1: new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2),
+        _zee: new THREE.Vector3(0, 0, 1),
+        _dir: new THREE.Vector3(),
+        _tmpQ: new THREE.Quaternion(),
+
+        async toggle() {
+            if (this.active) return this.disable();
+            // iOS requires an explicit permission grant from a user gesture.
+            try {
+                if (typeof DeviceOrientationEvent !== 'undefined' &&
+                    typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    if (await DeviceOrientationEvent.requestPermission() !== 'granted') return;
+                }
+            } catch (_) { /* no permission API: just listen */ }
+
+            this.active = true;
+            this._needCalib = true;   // first event maps device heading -> current view
+            window.addEventListener('deviceorientation', this._onEvent);
+            controls.enabled = false;
+            $('tool-gyro').classList.add('tool-active');
+            $('tool-north').style.display = 'flex';
+        },
+
+        disable() {
+            this.active = false;
+            window.removeEventListener('deviceorientation', this._onEvent);
+            // Hand OrbitControls a target in front of the camera so the view
+            // does not snap when it takes over again.
+            camera.getWorldDirection(this._dir);
+            const d = Math.max(controls.target.distanceTo(camera.position), modelSize * 0.05);
+            controls.target.copy(camera.position).addScaledVector(this._dir, d);
+            controls.enabled = true;
+            controls.update();
+            $('tool-gyro').classList.remove('tool-active');
+            $('tool-north').style.display = 'none';
+            markDirty();
+        },
+
+        _onEvent(e) {
+            if (e.alpha === null || e.alpha === undefined) return;
+            Gyro.data = { alpha: e.alpha, beta: e.beta || 0, gamma: e.gamma || 0 };
+            if (Gyro._needCalib) { Gyro._needCalib = false; Gyro.calibrate(); }
+            markDirty();
+        },
+
+        _quatFor(q, alphaRad, betaRad, gammaRad, orientRad) {
+            this._euler.set(betaRad, alphaRad, -gammaRad, 'YXZ');
+            q.setFromEuler(this._euler);
+            q.multiply(this._q1);
+            q.multiply(this._q0.setFromAxisAngle(this._zee, -orientRad));
+        },
+
+        _yawOf(q) {
+            this._dir.set(0, 0, -1).applyQuaternion(q);
+            return Math.atan2(-this._dir.x, -this._dir.z);
+        },
+
+        // The current physical direction of the phone becomes "north": it
+        // maps to whatever the camera is looking at right now.
+        calibrate() {
+            if (!this.data) return;
+            const d2r = THREE.MathUtils.degToRad;
+            const orient = d2r((screen.orientation && screen.orientation.angle) || 0);
+            this._quatFor(this._tmpQ, d2r(this.data.alpha), d2r(this.data.beta), d2r(this.data.gamma), orient);
+            const camYaw = this._yawOf(camera.quaternion);
+            this.headingOffset = camYaw - this._yawOf(this._tmpQ);
+            markDirty();
+        },
+
+        // Applies the device orientation to the camera; true when it did.
+        apply() {
+            if (!this.active || !this.data) return false;
+            const d2r = THREE.MathUtils.degToRad;
+            const orient = d2r((screen.orientation && screen.orientation.angle) || 0);
+            this._quatFor(this._tmpQ, d2r(this.data.alpha) + this.headingOffset, d2r(this.data.beta), d2r(this.data.gamma), orient);
+            camera.quaternion.copy(this._tmpQ);
+            return true;
+        }
+    };
+
+    function setupToolbar() {
+        $('tool-filter').addEventListener('click', () => CategoryFilter.toggleMenu());
+        $('tool-reset-filter').addEventListener('click', () => CategoryFilter.reset());
+        $('tool-measure').addEventListener('click', () => Measure.setMode('two'));
+        $('tool-rays').addEventListener('click', () => Measure.setMode('rays'));
+        $('tool-gyro').addEventListener('click', () => Gyro.toggle());
+        $('tool-north').addEventListener('click', () => Gyro.calibrate());
+    }
+
+    // ==================================================================
+    // Picking
+    // ==================================================================
+    function setupPointerPicking() {
+        const el = renderer.domElement;
+        let down = { x: 0, y: 0, t: 0, id: -1, multi: false };
+        // Manual double-tap detection: the native dblclick event is not
+        // reliable on touch screens with touch-action: none, and one code
+        // path serving mouse and finger alike is easier to keep honest.
+        let lastTap = { t: -1e9, x: 0, y: 0 };
+
+        el.addEventListener('pointerdown', (e) => {
+            cancelWalk();  // grabbing the scene interrupts the glide
+            down = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, multi: down.id !== -1 };
+        });
+        el.addEventListener('pointerup', (e) => {
+            if (e.pointerId !== down.id || down.multi) { down.id = -1; return; }
+            down.id = -1;
+            const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+            const held = performance.now() - down.t;
+            if (moved >= 6 || held >= 700) return;
+
+            // With a dimension tool armed, every tap is a measurement point:
+            // selection and walk-to stand aside until the tool is toggled off.
+            if (Measure.mode !== 'none') {
+                Measure.click(e.clientX, e.clientY);
+                return;
+            }
+
+            const now = performance.now();
+            const isDouble = now - lastTap.t < 400 &&
+                Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30;
+            lastTap = { t: now, x: e.clientX, y: e.clientY };
+
+            if (isDouble) {
+                lastTap.t = -1e9;  // a third tap starts a fresh pair
+                walkTo(e.clientX, e.clientY, false);
+            } else {
+                pick(e.clientX, e.clientY);
+            }
+        });
+        el.addEventListener('pointercancel', () => { down.id = -1; });
+
+        $('info-close').addEventListener('click', closeInfo);
+    }
+
+    function faceOwnerOf(mesh, faceIndex) {
+        const { faceStart, faceOwner } = mesh.userData;
+        let lo = 0, hi = faceStart.length - 1, best = 0;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (faceStart[mid] <= faceIndex) { best = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return faceOwner[best];
+    }
+
+    function pick(clientX, clientY) {
+        if (!ready) return;
+
+        pointerNdc.x = (clientX / window.innerWidth) * 2 - 1;
+        pointerNdc.y = -(clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(pointerNdc, camera);
+
+        const hits = raycaster.intersectObjects(visibleParts(), false);
+        const eps = modelSize * 1e-4;
+
+        // The raycaster is unaware of clipping planes, so skip any hit that
+        // lands on geometry the GPU has already cut away.
+        for (const hit of hits) {
+            if (!pointInBox(hit.point, eps)) continue;
+            select(faceOwnerOf(hit.object, hit.faceIndex));
+            return;
+        }
+        closeInfo();
+    }
+
+    function clearHighlight() {
+        if (!highlightMesh) return;
+        mainGroup.remove(highlightMesh);
+        highlightMesh.geometry.dispose();
+        highlightMesh.material.dispose();
+        highlightMesh = null;
+    }
+
+    function select(id) {
+        clearHighlight();
+        selectedId = id;
+
+        const inst = tbvData.instances[id];
+        const src = tbvData.meshes[inst.meshIdx];
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(src.positions, 3));
+        geo.setAttribute('normal', new THREE.BufferAttribute(src.normals, 3, true));
+        geo.setIndex(new THREE.BufferAttribute(src.indices.slice(), 1));
+        geo.computeBoundingSphere();
+
+        highlightMesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+            color: HIGHLIGHT,
+            side: THREE.DoubleSide,
+            clippingPlanes: clipPlanes,
+            polygonOffset: true,        // sit just in front of the merged surface
+            polygonOffsetFactor: -2,
+            polygonOffsetUnits: -2
+        }));
+        highlightMesh.position.set(inst.dx, inst.dy, inst.dz);
+        highlightMesh.renderOrder = 2;
+        highlightMesh.frustumCulled = false;
+        mainGroup.add(highlightMesh);
+
+        const mat = tbvData.materials[inst.matIdx];
+        $('info-content').innerHTML =
+            infoRow('Element ID', inst.elemId) +
+            infoRow('Category ID', inst.catId) +
+            infoRow('Mesh Pool ID', inst.meshIdx) +
+            infoRow('Material', `#${mat.matId} · rgba(${mat.r},${mat.g},${mat.b},${mat.a})`) +
+            infoRow('Triángulos', src.tc.toLocaleString('es')) +
+            infoRow('Posición', `${inst.dx.toFixed(2)}, ${inst.dy.toFixed(2)}, ${inst.dz.toFixed(2)}`) +
+            infoRow('GUID', inst.guid);
+
+        const panel = $('info-panel');
+        panel.style.display = 'block';
+        void panel.offsetWidth;   // commit layout so the transition runs
+        panel.classList.add('show');
+        if (isPhone()) document.body.classList.add('info-open');
+        markDirty();
+    }
+    const infoRow = (k, v) => `<div class="info-row"><span class="info-label">${k}</span><span class="info-val">${v}</span></div>`;
+
+    function closeInfo() {
+        if (selectedId === null) return;
+        selectedId = null;
+        clearHighlight();
+        document.body.classList.remove('info-open');
+        const panel = $('info-panel');
+        panel.classList.remove('show');
+        setTimeout(() => { if (selectedId === null) panel.style.display = 'none'; }, 300);
+        markDirty();
+    }
+
+    // ==================================================================
+    // Panel chrome
+    // ==================================================================
+    let panelUserToggled = false;
+
+    function setupPanelUi() {
+        const toggle = $('ui-toggle');
+        toggle.addEventListener('click', () => {
+            panelUserToggled = true;
+            const collapsed = document.body.classList.toggle('panel-collapsed');
+            toggle.setAttribute('aria-expanded', String(!collapsed));
+            minimapRect = null;
+            markDirty();
+        });
+        $('btn-reset').addEventListener('click', () => {
+            resetSliders();
+            userMovedCamera = false;   // hand the framing back to the viewer
+            fitCamera();
+        });
+
+        // Desktop starts expanded, phones collapsed so the model stays
+        // visible. Re-evaluated whenever the breakpoint is crossed (rotation,
+        // window resize) unless the user has taken over the toggle.
+        applyBreakpoint();
+        const onBreakpoint = () => { applyBreakpoint(); minimapRect = null; markDirty(); };
+        if (phoneMq.addEventListener) phoneMq.addEventListener('change', onBreakpoint);
+        else phoneMq.addListener(onBreakpoint);
+
+        window.addEventListener('resize', () => { minimapRect = null; });
+    }
+
+    function applyBreakpoint() {
+        if (panelUserToggled) return;
+        const collapsed = isPhone();
+        document.body.classList.toggle('panel-collapsed', collapsed);
+        $('ui-toggle').setAttribute('aria-expanded', String(!collapsed));
+    }
+
+    // Largest |NDC| among the model's 8 bounding-box corners. <= 1 means the
+    // whole building is on screen; the value is how much of the smaller
+    // screen axis it fills.
+    const ndcProbe = new THREE.Vector3();
+
+    function worstNdc() {
+        const d = tbvData;
+        let worst = 0;
+        for (let i = 0; i < 8; i++) {
+            ndcProbe.set(
+                (i & 1) ? d.sceneMax[0] : d.sceneMin[0],
+                (i & 2) ? d.sceneMax[1] : d.sceneMin[1],
+                (i & 4) ? d.sceneMax[2] : d.sceneMin[2]
+            ).project(camera);
+            worst = Math.max(worst, Math.abs(ndcProbe.x), Math.abs(ndcProbe.y));
+        }
+        return worst;
+    }
+
+    // Frames the whole model for the *current* aspect ratio. A fixed camera
+    // offset crops the building on a narrow portrait phone, where the
+    // horizontal field of view is far tighter than the vertical one.
+    // The bounding sphere gives a safe starting distance; a couple of
+    // refinement passes then pull in to fit the actual box, which for a tall
+    // slab-shaped building is much closer than the sphere suggests.
+    const FIT_TARGET = 0.92;
+
+    function fitCamera() {
+        const d = tbvData;
+        const radius = 0.5 * Math.hypot(
+            d.sceneMax[0] - d.sceneMin[0],
+            d.sceneMax[1] - d.sceneMin[1],
+            d.sceneMax[2] - d.sceneMin[2]
+        );
+
+        const fovV = THREE.MathUtils.degToRad(camera.fov);
+        const fovH = 2 * Math.atan(Math.tan(fovV / 2) * camera.aspect);
+        let dist = Math.max(radius / Math.sin(fovV / 2), radius / Math.sin(fovH / 2));
+
+        const dir = new THREE.Vector3(0.8, 0.6, 0.8).normalize();
+        controls.target.copy(modelCenter);
+
+        camera.near = Math.max(radius * 0.001, 0.01);
+        camera.far = dist + radius * 8;
+        camera.updateProjectionMatrix();
+
+        // The camera has to be aimed before its projection means anything.
+        // controls.update() would only orient it after the loop has run, so
+        // on a cold start the fit would measure a camera still looking down
+        // -Z from initThree.
+        const place = () => {
+            camera.position.copy(modelCenter).addScaledVector(dir, dist);
+            camera.lookAt(modelCenter);
+            camera.updateMatrixWorld();
+        };
+
+        // Iterate so that the distance the camera ends up at is always the
+        // one that was last measured. NDC scales roughly as 1/dist, so this
+        // converges in two or three passes.
+        place();
+        for (let pass = 0; pass < 5; pass++) {
+            const worst = worstNdc();
+            if (!isFinite(worst) || worst <= 1e-6) break;
+            if (Math.abs(worst - FIT_TARGET) < 0.005) break;
+            dist *= worst / FIT_TARGET;
+            place();
+        }
+
+        camera.far = dist + radius * 8;
+        camera.updateProjectionMatrix();
+        controls.update();
+        markDirty();
+    }
+
+    // ==================================================================
+    // Frame loop
+    // ==================================================================
+    let lastStats = 0;
+    let lastFrameAt = 0;
+
+    // Only low-end devices trade resolution for frame rate; a desktop GPU
+    // that dips below 24 fps is doing something else, and blurring the view
+    // would not help.
+    function maybeAdaptQuality(now, frameMs) {
+        if (!lowEnd || !ready || dprCurrent <= DPR_FLOOR) return;
+
+        frameSamples.push(frameMs);
+        if (frameSamples.length > 90) frameSamples.shift();
+        if (frameSamples.length < 60 || now - lastAdaptAt < 4000) return;
+
+        const avg = frameSamples.reduce((a, b) => a + b, 0) / frameSamples.length;
+        if (avg > 1000 / 24) {
+            dprCurrent = Math.max(DPR_FLOOR, dprCurrent - 0.25);
+            renderer.setPixelRatio(dprCurrent);
+            lastAdaptAt = now;
+            frameSamples.length = 0;
+            markDirty();
+        }
+    }
+
+    function animate(now) {
+        now = now || 0;
+        const dt = Math.min(clock.getDelta(), 0.1);
+
+        if (boxDirty) { boxDirty = false; applyBox(); markDirty(); }
+        if (updateWalk()) markDirty();
+        if (updateMovement(dt)) markDirty();
+        if (Gyro.apply()) markDirty();
+        // OrbitControls' update() re-aims the camera at its target, which
+        // would overwrite the gyroscope orientation every frame.
+        if (!Gyro.active) controls.update();  // damping fires 'change' -> markDirty
+
+        if (ready && now - lastStats > 500) { lastStats = now; updateStats(); }
+
+        if (!needsRender) { lastFrameAt = now; return; }
+        needsRender = false;
+        renderCount++;
+
+        renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+        renderer.setScissorTest(false);
+        renderer.render(scene, camera);
+
+        // renderer.info is reset at the start of every render() call, so the
+        // main pass has to be sampled before the minimap pass overwrites it.
+        mainPassStats.calls = renderer.info.render.calls;
+        mainPassStats.triangles = renderer.info.render.triangles;
+
+        renderMinimap();
+        Measure.updateLabels();
+
+        if (lastFrameAt) maybeAdaptQuality(now, now - lastFrameAt);
+        lastFrameAt = now;
+    }
+
+    // ==================================================================
+    // Loading
+    // ==================================================================
+    const loaderEl = $('loader');
+    const loaderText = $('loader-text');
+    const loaderBar = $('loader-bar').firstElementChild;
+
+    const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+    async function step(text, pct, fn) {
+        loaderText.textContent = text;
+        loaderBar.style.width = pct + '%';
+        await nextFrame();
+        await nextFrame();  // let the browser actually paint before we block
+        return fn();
+    }
+
+    async function base64ToBytes(b64) {
+        // The native data-URL decoder is several times faster than a
+        // charCodeAt loop over a 3 MB string, and it does not block as long.
+        // Skipped on file:// — some browsers block fetch() there entirely and
+        // log a scary "Unsafe attempt to load URL" security warning even
+        // though the catch below recovers.
+        if (location.protocol !== 'file:') {
+            try {
+                const res = await fetch('data:application/octet-stream;base64,' + b64);
+                return new Uint8Array(await res.arrayBuffer());
+            } catch (_) { /* fall through to the manual decoder */ }
+        }
+        const bin = atob(b64);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    }
+
+    async function loadBuffer(buffer) {
+        ready = false;
+        loaderEl.classList.remove('hidden');
+        loaderEl.style.display = 'flex';
+
+        try {
+            const data = await step('Interpretando geometría…', 45, () => parseTbv(buffer));
+            tbvData = data;
+
+            modelCenter.set(
+                (data.sceneMin[0] + data.sceneMax[0]) / 2,
+                (data.sceneMin[1] + data.sceneMax[1]) / 2,
+                (data.sceneMin[2] + data.sceneMax[2]) / 2
+            );
+            modelSize = Math.max(
+                data.sceneMax[0] - data.sceneMin[0],
+                data.sceneMax[1] - data.sceneMin[1],
+                data.sceneMax[2] - data.sceneMin[2]
+            ) || 1;
+
+            await step('Fusionando mallas por material…', 75, () => buildScene(data));
+            await step('Preparando controles…', 92, () => {
+                setupSliders(data.sceneMin, data.sceneMax);
+                applyBox();
+                fitCamera();
+            });
+
+            $('minimap-box').style.display = 'block';
+            $('dropzone').classList.remove('show');
+            minimapRect = null;
+
+            await step('Listo', 100, () => {});
+            loaderEl.classList.add('hidden');
+            setTimeout(() => { loaderEl.style.display = 'none'; }, 500);
+            ready = true;
+        } catch (err) {
+            loaderEl.style.display = 'none';
+            reportError('CARGA', err.message);
+            $('dropzone').classList.add('show');
+            throw err;
+        }
+    }
+
+    async function loadFromBase64(b64) {
+        const bytes = await step('Decodificando modelo incrustado…', 20, () => base64ToBytes(b64));
+        await loadBuffer(bytes.buffer);
+    }
+
+    function setupFileLoading() {
+        const input = $('file-input');
+        $('pick-file').addEventListener('click', () => input.click());
+        input.addEventListener('change', async () => {
+            if (input.files[0]) await loadBuffer(await input.files[0].arrayBuffer());
+        });
+
+        let dragDepth = 0;
+        window.addEventListener('dragenter', (e) => { e.preventDefault(); if (++dragDepth === 1) document.body.classList.add('dragging'); });
+        window.addEventListener('dragover', (e) => { e.preventDefault(); });
+        window.addEventListener('dragleave', (e) => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+        window.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            dragDepth = 0;
+            document.body.classList.remove('dragging');
+            const file = e.dataTransfer.files[0];
+            if (file) await loadBuffer(await file.arrayBuffer());
+        });
+    }
+
+    // ==================================================================
+    // Test surface (used by test_viewer.js)
+    // ==================================================================
+    window.__viewer = {
+        get ready() { return ready; },
+        get errors() { return reportedErrors.slice(); },
+        info() {
+            const r = mainPassStats;
+            const mb = $('minimap-box');
+            return {
+                ready,
+                errors: reportedErrors.slice(),
+                instances: tbvData ? tbvData.instances.length : 0,
+                materials: tbvData ? tbvData.materials.length : 0,
+                pool: tbvData ? tbvData.meshes.length : 0,
+                meshParts: meshParts.length,
+                drawCalls: r.calls,
+                triangles: r.triangles,
+                visible: tbvData ? countVisible() : 0,
+                selected: selectedId,
+                box: { min: box.min.slice(), max: box.max.slice() },
+                extent: { min: extent.min.slice(), max: extent.max.slice() },
+                minimapVisible: !!mb && mb.offsetParent !== null,
+                joystickVisible: $('joystick-container').offsetParent !== null,
+                panelCollapsed: document.body.classList.contains('panel-collapsed'),
+                camera: camera.position.toArray(),
+                glCtxLost: renderer.getContext().isContextLost(),
+                renderCount,
+                pixelRatio: dprCurrent,
+                lowEnd,
+                walking: walk.active,
+                walkTarget: walk.active ? walk.toPos.toArray() : null,
+                walkMarkerVisible: !!walkMarker && walkMarker.visible,
+                walkDurMs: walk.durMs,
+                eyeHeight: EYE_HEIGHT,
+                glassParts: meshParts.filter((m) => m.userData.isGlass).length,
+                glassOpacity: (meshParts.find((m) => m.userData.isGlass) || { material: {} }).material.opacity || 0,
+                categories: CategoryFilter.cats().map((id) => ({ id, name: catName(id), on: !CategoryFilter.hidden.has(id) })),
+                filterActive: CategoryFilter.hidden.size > 0,
+                measureMode: Measure.mode,
+                dimCount: Measure.dims.filter((d) => d.line).length,
+                dimLabels: Measure.dims.map((d) => d.labelEl.textContent),
+                gyroActive: Gyro.active
+            };
+        },
+        get renderCount() { return renderCount; },
+        markDirty,
+        fitCamera,
+        // <= 1 means the whole building is inside the frustum.
+        framing() { camera.updateMatrixWorld(); return worstNdc(); },
+        // Times N forced redraws, bypassing render-on-demand.
+        benchmark(frames) {
+            return new Promise((resolve) => {
+                const t0 = performance.now();
+                let n = 0;
+                (function loop() {
+                    markDirty();
+                    n++;
+                    if (n < frames) requestAnimationFrame(loop);
+                    else resolve((performance.now() - t0) / frames);
+                })();
+            });
+        },
+        // Classifies the pixels inside the minimap rectangle. Must run inside
+        // the frame that drew them: without preserveDrawingBuffer the colour
+        // buffer is undefined once the frame has been presented.
+        sampleMinimap() {
+            return new Promise((resolve) => {
+                pendingSample = resolve;
+                markDirty();
+            });
+        },
+        setBox(axis, lo, hi) {
+            $('clip-' + axis + '-min').value = lo;
+            $('clip-' + axis + '-max').value = hi;
+            boxDirty = true;
+        },
+        resetBox() { resetSliders(); },
+        select,
+        closeInfo,
+        pickAt: pick,
+        pickCenter() { pick(window.innerWidth / 2, window.innerHeight / 2); },
+        walkTo,
+        probeFloor(x, y) { return walkTo(x, y, true); },
+        setJoystick(x, y) { joyVector.x = x; joyVector.y = y; markDirty(); },
+        setElev(v) { elevVector = v; markDirty(); },
+        togglePanel() { $('ui-toggle').click(); },
+        showTouchUi,
+        // Category filter
+        toggleCategory(id, on) { CategoryFilter.toggle(id, on); },
+        isolateCategory(id) { CategoryFilter.isolate(id); },
+        resetFilter() { CategoryFilter.reset(); },
+        openCatMenu() { CategoryFilter.toggleMenu(); },
+        // Dimension tools
+        setMeasureMode(m) { Measure.setMode(m); },
+        measureClick(x, y) { Measure.click(x, y); },
+        // Gyroscope
+        gyroToggle() { return Gyro.toggle(); },
+        gyroCalibrate() { Gyro.calibrate(); },
+        cameraHeading() {
+            const d = new THREE.Vector3();
+            camera.getWorldDirection(d);
+            return Math.atan2(-d.x, -d.z) * 180 / Math.PI;
+        }
+    };
+
+    // ==================================================================
+    // Boot
+    // ==================================================================
+    initThree();
+    setupFileLoading();
+
+    window.addEventListener('load', () => {
+        const embedded = document.getElementById('embedded-tbv');
+        const payload = embedded ? embedded.textContent.trim() : '';
+        if (payload.length > 100) {
+            loadFromBase64(payload).catch(() => {});
+        } else {
+            loaderEl.style.display = 'none';
+            $('dropzone').classList.add('show');
+        }
+    });
+
+    })();
+    </script>
+
+<script id="embedded-tbv" type="text/plain">__TBV_BASE64__</script>
+</body>
+</html>

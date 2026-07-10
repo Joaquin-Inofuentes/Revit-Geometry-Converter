@@ -16,7 +16,7 @@ Piezas instanciadas (malla compartida): 99
 Geometrías únicas en el .tbv (dedup): 2536 de 2635 piezas
 Binario de visor (.tbv): 2.269 KB
 OBJ: 11.596 KB   GLB: 4.796 KB
-Tiempo total: 2,0 s
+Tiempo total: 2,5 s
 ====================================
 
 VALIDACIÓN FINAL: OK — ninguna pieza rota en la salida.

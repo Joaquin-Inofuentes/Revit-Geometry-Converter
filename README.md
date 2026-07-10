@@ -1,0 +1,5 @@
+# _Revit_EXE_Geometrias
+
+- **IN (Entrada):** Archivo binario secuencial de extracción de geometría de Revit `export.bin` (en formato TBT2 / v3) generado por la macro o complemento de exportación en C# de Revit 2021.
+- **OUT (Salida):** Malla tridimensional OBJ clásica (`export.obj`), archivo glTF binario con instanciación deduplicada de mallas compartidas (`export_optimizado.glb`), archivo binario indexado con índice espacial AABB para visualización en web (`export.tbv`) y reporte analítico de decimación y errores (`export_reporte.txt`), cargados dinámicamente en el visor web interactivo de Three.js (`index.html`).
+- **Intención:** Extraer y optimizar de forma automatizada la geometría tridimensional compleja de modelos de Revit hacia formatos WebGL ligeros y eficientes (.obj, .glb, .tbv), aplicando decimación de malla QEM (Quadric Error Metrics), soldadura de vértices, eliminación de geometrías degeneradas e instanciación de mallas compartidas para su renderizado óptimo en navegadores web y dispositivos móviles.
