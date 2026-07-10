@@ -1,0 +1,9 @@
+# Visual Studio ignores
+codigo/**/bin/
+codigo/**/obj/
+temp_simplifier/
+
+# Ignorar archivos generados excesivamente grandes si se desea (opcional)
+# *.obj
+# *.glb
+# *.bin
