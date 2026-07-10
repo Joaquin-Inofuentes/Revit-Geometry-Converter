@@ -64,8 +64,6 @@ namespace ConvertidorGeometrias
 
         static List<MeshData> OptimizeMeshes(List<MeshData> inputMeshes)
         {
-            // El usuario solicitó mantener las piezas separadas.
-            // Agrupamos por Guid (Elemento de Revit) en lugar de MaterialId
             var grouped = inputMeshes.GroupBy(m => m.Guid);
             var optimizedList = new List<MeshData>();
 
@@ -75,7 +73,6 @@ namespace ConvertidorGeometrias
                 mergedMesh.Guid = group.Key;
                 mergedMesh.MaterialId = group.First().MaterialId;
 
-                // Unir todas las caras de este elemento
                 int vertexOffset = 0;
                 foreach (var mesh in group)
                 {
@@ -87,10 +84,12 @@ namespace ConvertidorGeometrias
                     vertexOffset += mesh.Vertices.Count;
                 }
                 
+                // 1. Soldar Vértices Duplicados (Crucial para que QEM no rompa la malla)
+                WeldVertices(mergedMesh);
+
                 int originalTriangles = mergedMesh.Indices.Count / 3;
                 if (originalTriangles < 2) continue;
 
-                // Preparar datos para QEM MeshDecimator
                 var mdVertices = new MeshDecimator.Math.Vector3d[mergedMesh.Vertices.Count];
                 for (int i = 0; i < mergedMesh.Vertices.Count; i++)
                 {
@@ -105,21 +104,24 @@ namespace ConvertidorGeometrias
                 var srcMesh = new MeshDecimator.Mesh(mdVertices, mdIndices);
 
                 // Cálculo dinámico del target:
-                // Tazas/picaportes tendrán miles de triángulos, podemos diezmarlos al 5% o 10%
-                // Muros planos tendrán menos, podemos dejarlos al 20% o 50%
                 int targetTriangles = originalTriangles;
-                if (originalTriangles > 1000) targetTriangles = (int)(originalTriangles * 0.10); // 10%
-                else if (originalTriangles > 200) targetTriangles = (int)(originalTriangles * 0.20); // 20%
-                else if (originalTriangles > 50) targetTriangles = (int)(originalTriangles * 0.40); // 40%
-                else targetTriangles = Math.Max((int)(originalTriangles * 0.60), 2); // 60%, minimo 2
+                if (originalTriangles > 2000) targetTriangles = (int)(originalTriangles * 0.15); 
+                else if (originalTriangles > 500) targetTriangles = (int)(originalTriangles * 0.30);
+                else if (originalTriangles > 100) targetTriangles = (int)(originalTriangles * 0.50);
+                else targetTriangles = Math.Max((int)(originalTriangles * 0.80), 2);
+
+                // Usamos explícitamente FastQuadricMeshSimplification para habilitar protección
+                var algorithm = new MeshDecimator.Algorithms.FastQuadricMeshSimplification();
+                algorithm.PreserveBorders = true;
+                algorithm.PreserveSeams = true;
+                algorithm.EnableSmartLink = true; // Ayuda a conectar caras casi desconectadas
 
                 var decimatedMdMesh = MeshDecimator.MeshDecimation.DecimateMesh(
-                    MeshDecimator.Algorithm.FastQuadricMesh, 
+                    algorithm, 
                     srcMesh, 
                     targetTriangles
                 );
 
-                // Reconstruir MeshData de salida
                 var outMesh = new MeshData
                 {
                     Guid = mergedMesh.Guid,
@@ -170,6 +172,31 @@ namespace ConvertidorGeometrias
             }
 
             return optimizedList;
+        }
+
+        static void WeldVertices(MeshData mesh)
+        {
+            var uniqueVertices = new List<Vector3>();
+            var vertexMap = new Dictionary<string, int>();
+            var newIndices = new List<int>(mesh.Indices.Count);
+
+            foreach (var index in mesh.Indices)
+            {
+                var v = mesh.Vertices[index];
+                // Clave hash redondeando a 4 decimales (tolerancia de 0.1 mm)
+                string key = $"{Math.Round(v.X, 4)}_{Math.Round(v.Y, 4)}_{Math.Round(v.Z, 4)}";
+
+                if (!vertexMap.TryGetValue(key, out int newIndex))
+                {
+                    newIndex = uniqueVertices.Count;
+                    uniqueVertices.Add(v);
+                    vertexMap[key] = newIndex;
+                }
+                newIndices.Add(newIndex);
+            }
+
+            mesh.Vertices = uniqueVertices;
+            mesh.Indices = newIndices;
         }
 
         static List<MeshData> LeerBinario(string path)
