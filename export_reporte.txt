@@ -1,20 +1,20 @@
 
 =========== ESTADÍSTICAS ===========
-Formato de entrada:     v2
+Formato de entrada:     v3
 Mallas de entrada:      34769
 Piezas de salida:       2635 (descartadas vacías: 0)
-Vértices:  264.070 -> soldados 108.357 -> finales 74.996  (28,4% del original)
-Triángulos: 206.648 -> finales 139.744  (67,6% del original)
-Triángulos degenerados eliminados: 64
-Piezas chicas sin decimar (cubos/prismas protegidos): 1066
-Piezas intactas por categoría protegida (muros/suelos/techos): 0
+Vértices:  264.070 -> soldados 108.357 -> finales 81.975  (31,0% del original)
+Triángulos: 206.648 -> finales 153.732  (74,4% del original)
+Triángulos degenerados eliminados: 60
+Piezas chicas sin decimar (cubos/prismas protegidos): 241
+Piezas intactas por categoría protegida (muros/suelos/techos): 1785
 Piezas con reintento conservador:  0
-Piezas con fallback (sin decimar): 14
+Piezas con fallback (sin decimar): 13
 Piezas rotas detectadas y REPARADAS con geometría original: 0
 Materiales transparentes (vidrio): 1
 Piezas instanciadas (malla compartida): 99
-OBJ: 10.596 KB   GLB: 4.367 KB
-Tiempo total: 1,8 s
+OBJ: 11.596 KB   GLB: 4.612 KB
+Tiempo total: 1,5 s
 ====================================
 
 VALIDACIÓN FINAL: OK — ninguna pieza rota en la salida.
