@@ -1,0 +1,20 @@
+
+=========== ESTADÍSTICAS ===========
+Formato de entrada:     v2
+Mallas de entrada:      34769
+Piezas de salida:       2635 (descartadas vacías: 0)
+Vértices:  264.070 -> soldados 108.357 -> finales 74.996  (28,4% del original)
+Triángulos: 206.648 -> finales 139.744  (67,6% del original)
+Triángulos degenerados eliminados: 64
+Piezas chicas sin decimar (cubos/prismas protegidos): 1066
+Piezas intactas por categoría protegida (muros/suelos/techos): 0
+Piezas con reintento conservador:  0
+Piezas con fallback (sin decimar): 14
+Piezas rotas detectadas y REPARADAS con geometría original: 0
+Materiales transparentes (vidrio): 1
+Piezas instanciadas (malla compartida): 99
+OBJ: 10.596 KB   GLB: 4.367 KB
+Tiempo total: 1,8 s
+====================================
+
+VALIDACIÓN FINAL: OK — ninguna pieza rota en la salida.
