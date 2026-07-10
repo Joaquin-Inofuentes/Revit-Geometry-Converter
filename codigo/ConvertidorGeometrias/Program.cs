@@ -114,7 +114,8 @@ namespace ConvertidorGeometrias
                 var algorithm = new MeshDecimator.Algorithms.FastQuadricMeshSimplification();
                 algorithm.PreserveBorders = true;
                 algorithm.PreserveSeams = true;
-                algorithm.EnableSmartLink = true; // Ayuda a conectar caras casi desconectadas
+                algorithm.PreserveFoldovers = true; // Previene triángulos invertidos (sombras negras)
+                algorithm.EnableSmartLink = false; // Deshabilitado para no conectar muros interiores y exteriores creando spikes
 
                 var decimatedMdMesh = MeshDecimator.MeshDecimation.DecimateMesh(
                     algorithm, 
@@ -183,8 +184,8 @@ namespace ConvertidorGeometrias
             foreach (var index in mesh.Indices)
             {
                 var v = mesh.Vertices[index];
-                // Clave hash redondeando a 4 decimales (tolerancia de 0.1 mm)
-                string key = $"{Math.Round(v.X, 4)}_{Math.Round(v.Y, 4)}_{Math.Round(v.Z, 4)}";
+                // Clave hash redondeando a 3 decimales (tolerancia de 1 mm) para sellar micro-fisuras
+                string key = $"{Math.Round(v.X, 3)}_{Math.Round(v.Y, 3)}_{Math.Round(v.Z, 3)}";
 
                 if (!vertexMap.TryGetValue(key, out int newIndex))
                 {
