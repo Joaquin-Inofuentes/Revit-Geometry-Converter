@@ -688,6 +688,27 @@ async function main() {
         i = await info(driver);
         check('al aterrizar en el piso el modo pasa a walk (mirar)', i.navMode === 'walk');
 
+        // Modo mirar (primera persona): arrastrar gira la vista SIN mover la
+        // posición (pivote propio), y sin invertir el sentido.
+        {
+            const pos0 = (await info(driver)).camera;
+            const h0 = await driver.executeScript('return window.__viewer.cameraHeading();');
+            const canvas = await driver.findElement(By.css('#canvas-container canvas'));
+            await driver.actions({ async: true })
+                .move({ origin: canvas, x: 0, y: 0 }).press()
+                .move({ origin: canvas, x: 200, y: 0, duration: 250 }).release().perform();
+            await sleep(300);
+            const posN = (await info(driver)).camera;
+            const h1 = await driver.executeScript('return window.__viewer.cameraHeading();');
+            const posMoved = Math.hypot(posN[0]-pos0[0], posN[1]-pos0[1], posN[2]-pos0[2]);
+            const dHead = ((h1 - h0 + 540) % 360) - 180;
+            check('arrastrar en modo mirar rota la vista desde el pivote propio (posicion ~fija)',
+                Math.abs(dHead) > 15 && posMoved < 0.3,
+                'Δrumbo=' + dHead.toFixed(1) + '° pos movida=' + posMoved.toFixed(2));
+            check('la rotacion no esta invertida (derecha -> rumbo aumenta)', dHead > 0,
+                'Δrumbo=' + dHead.toFixed(1) + '°');
+        }
+
         // Inside the building the minimap zooms to room scale: the cut walls
         // must now be plainly readable (this was the user's top priority).
         const mapRoom = await driver.executeAsyncScript(
@@ -749,8 +770,10 @@ async function main() {
         await driver.executeScript('window.__viewer.measureClick(window.innerWidth * 0.5, window.innerHeight * 0.62);');
         await sleep(400);
         i = await info(driver);
-        check('un click lanza cotas en varias direcciones', i.dimCount >= 3,
+        check('un click da exactamente 3 cotas (una por eje X/Y/Z)', i.dimCount === 3,
             i.dimCount + ' cotas: ' + JSON.stringify(i.dimLabels));
+        check('cada extremo lleva una esfera amarilla (2 por cota)', i.dimMarks === i.dimCount * 2,
+            i.dimMarks + ' esferas para ' + i.dimCount + ' cotas');
         const metros = i.dimLabels
             .map((t) => parseFloat(t.replace(',', '.')))
             .filter((v) => isFinite(v));
@@ -758,12 +781,11 @@ async function main() {
             metros.some((v) => v >= 1.8 && v <= 8), JSON.stringify(metros));
 
         // A second click REPLACES the previous measurement (one at a time).
-        const firstCount = i.dimCount;
         await driver.executeScript('window.__viewer.measureClick(window.innerWidth * 0.45, window.innerHeight * 0.7);');
         await sleep(300);
         i = await info(driver);
-        check('la cota espacial es una sola a la vez (no acumula)',
-            i.dimCount <= firstCount + 1, firstCount + ' -> ' + i.dimCount);
+        check('la cota espacial es una sola a la vez (siempre 3, no acumula)',
+            i.dimCount === 3, '-> ' + i.dimCount);
         await shot(driver, '14_cota_espacial');
         await driver.findElement(By.css('#tool-rays')).click();
         i = await info(driver);
@@ -817,6 +839,7 @@ async function main() {
         i = await info(driver);
         check('seleccionar muestra la cartilla con botones', i.selected !== null &&
             await driver.executeScript('return !!document.getElementById("info-isolate") && !!document.getElementById("info-reset-filter");'));
+        check('al seleccionar, el resto del modelo se atenua (ghost) para resaltar', i.ghost === true);
         const selCat = await driver.executeScript('return window.__viewer.info().selected !== null ? window.__viewer.info().categories.length : 0;');
         await driver.findElement(By.css('#info-isolate')).click();
         await sleep(300);
@@ -832,6 +855,8 @@ async function main() {
             i.filterActive === false && i.visible === 2635);
         await driver.executeScript('window.__viewer.closeInfo();');
         await sleep(300);
+        i = await info(driver);
+        check('al cerrar la cartilla se restaura la opacidad (sin ghost)', i.ghost === false);
 
         // ============================================================
         console.log('\n\x1b[1m[19] API pública: LeerBinario / CargarBinario / LimpiarTodo + caché\x1b[0m');

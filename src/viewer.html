@@ -988,6 +988,7 @@
             mainGroup.remove(m);
         }
         meshParts = [];
+        ghostOn = false;           // el nuevo modelo arranca opaco
         clearHighlight();
         Measure.clear();           // stale dimensions point at the old model
     }
@@ -1522,21 +1523,28 @@
 
     // ------------------------------------------------------------------
     // Modo de navegación: 'orbit' (girar alrededor del modelo) o 'walk'
-    // (primera persona). Un rayo hacia abajo decide: si hay piso a menos de
-    // ~altura de ojos + margen, estás parado; si no, estás volando.
+    // (primera persona). Un rayo hacia abajo decide: si hay piso a 2 m o
+    // menos bajo la cámara, estás parado y se activa "vista de cámara"; si
+    // no, estás volando y se mantiene el modo orbital.
     //
-    // En modo walk el pivote de OrbitControls se acerca a 60 cm delante de
-    // la cámara y el sentido de arrastre se invierte: mantener click y
-    // arrastrar "gira la cabeza" desde el mismo lugar, como una persona.
+    // En modo walk NO se usa OrbitControls: el arrastre gira la cámara sobre
+    // su propio eje (yaw + pitch) como una persona mirando alrededor. Sin
+    // inversiones: arrastrar a la derecha mira a la derecha, arrastrar hacia
+    // arriba mira hacia arriba.
     // ------------------------------------------------------------------
     let walkMode = false;
     let lastFloorCheck = 0;
     const downRay = new THREE.Raycaster();
     const DOWN = new THREE.Vector3(0, -1, 0);
+    const FLOOR_REACH = 2.0 * UNITS_PER_METER;   // "máximo 2 m es un suelo"
+
+    // Estado del look en primera persona.
+    const look = { yaw: 0, pitch: 0, dragging: false, id: -1, lastX: 0, lastY: 0 };
+    const lookDir = new THREE.Vector3();
 
     function standingOnFloor() {
         downRay.set(camera.position, DOWN);
-        downRay.far = EYE_HEIGHT * 1.8;   // parado, con margen para escalones
+        downRay.far = FLOOR_REACH;
         const hits = downRay.intersectObjects(visibleParts(), false);
         const eps = modelSize * 1e-4;
         for (const hit of hits) {
@@ -1546,22 +1554,37 @@
         return false;
     }
 
+    // Deriva yaw/pitch del rumbo actual, para que el modo walk arranque
+    // mirando exactamente adonde estaba mirando la cámara.
+    function seedLookFromCamera() {
+        camera.getWorldDirection(lookDir);
+        look.yaw = Math.atan2(lookDir.x, lookDir.z);
+        look.pitch = Math.asin(THREE.MathUtils.clamp(lookDir.y, -1, 1));
+    }
+
+    // Reconstruye la dirección desde yaw/pitch y apunta la cámara.
+    function applyLook() {
+        const cp = Math.cos(look.pitch);
+        lookDir.set(Math.sin(look.yaw) * cp, Math.sin(look.pitch), Math.cos(look.yaw) * cp);
+        controls.target.copy(camera.position).add(lookDir);
+        camera.lookAt(controls.target);
+        markDirty();
+    }
+
     function setNavMode(walking) {
         if (walking === walkMode) return;
         walkMode = walking;
         camera.getWorldDirection(moveDir);
         if (walking) {
-            // Pivote pegado a la cámara + arrastre invertido = mirar.
-            controls.target.copy(camera.position).addScaledVector(moveDir, 0.6 * UNITS_PER_METER);
-            controls.rotateSpeed = -0.45;
-            controls.enablePan = false;
+            controls.enabled = false;   // el look manual toma el control
+            seedLookFromCamera();
+            applyLook();
         } else {
             // Pivote a distancia cómoda para volver a orbitar.
             controls.target.copy(camera.position).addScaledVector(moveDir, Math.max(8 * UNITS_PER_METER, modelSize * 0.05));
-            controls.rotateSpeed = 1;
-            controls.enablePan = true;
+            controls.enabled = true;
+            controls.update();
         }
-        controls.update();
         markDirty();
     }
 
@@ -1672,8 +1695,9 @@
         cancelWalk();  // manual input takes over from any glide
 
         // Speed follows the model's scale, and time, not the frame rate.
-        // 0.14 (era 0.28): el stick se sentía demasiado rápido.
-        let speed = modelSize * 0.14 * dt;
+        // 0.07 = mitad de la mitad de la velocidad máxima original (0.28):
+        // el stick se sentía demasiado rápido.
+        let speed = modelSize * 0.07 * dt;
         if (keys['ShiftLeft'] || keys['ShiftRight']) speed *= 3;
 
         camera.getWorldDirection(moveDir);
@@ -1701,8 +1725,9 @@
     //           segmento con su longitud, y al tener 3+ vértices se cierra el
     //           polígono y se muestra el ÁREA en el centroide. Botón para
     //           restablecer la cota.
-    //   'rays'  (espacial): un click lanza rayos en ±X ±Y ±Z. Simple: una
-    //           sola medición a la vez — cada click reemplaza la anterior.
+    //   'rays'  (espacial): un click da 3 cotas, una por eje X/Y/Z. Cada eje
+    //           suma sus dos rayos y sus extremos llevan una esferita amarilla
+    //           donde chocó. Una sola medición a la vez (reemplaza la anterior).
     //
     // Las líneas se dibujan con depthTest off; los números son chips DOM
     // reproyectados por frame: legibles en cualquier ángulo y sin costo de
@@ -1818,19 +1843,52 @@
             dim.mid = new THREE.Vector3(cx / n, cy / n, cz / n);
         },
 
-        // ---- Cota espacial (una sola a la vez) ----
+        // ---- Cota espacial: 3 cotas, una por eje ----
         spatial(p) {
             this.clearDims();   // reemplaza la medición anterior
-            const dirs = [
-                new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
-                new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
-                new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)
+            const axes = [
+                { pos: new THREE.Vector3(1, 0, 0), neg: new THREE.Vector3(-1, 0, 0) }, // X
+                { pos: new THREE.Vector3(0, 1, 0), neg: new THREE.Vector3(0, -1, 0) }, // Y
+                { pos: new THREE.Vector3(0, 0, 1), neg: new THREE.Vector3(0, 0, -1) }  // Z
             ];
-            for (const dir of dirs) {
-                const hit = this.castRay(p, dir);
-                if (hit) this.addSegment(p, hit);
+            for (const ax of axes) {
+                // Extremos del eje: adonde chocó cada rayo, o el propio punto
+                // clicado si ese lado no chocó nada.
+                const a = this.castRay(p, ax.neg) || p.clone();
+                const b = this.castRay(p, ax.pos) || p.clone();
+                const meters = a.distanceTo(b) / UNITS_PER_METER;
+                if (meters < 0.01) continue;
+                this.addAxisDim(a, b);
             }
             markDirty();
+        },
+
+        // Línea de eje con longitud total y una esfera amarilla en cada
+        // extremo (donde colisionó el rayo).
+        addAxisDim(a, b) {
+            const meters = a.distanceTo(b) / UNITS_PER_METER;
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+                a.x, a.y, a.z, b.x, b.y, b.z
+            ]), 3));
+            const line = new THREE.Line(geo, this.lineMat());
+            line.renderOrder = 3; line.frustumCulled = false;
+            scene.add(line);
+            const dim = this.addLabel(fmtM(meters), 'len');
+            dim.line = line;
+            dim.mid = a.clone().add(b).multiplyScalar(0.5);
+            dim.marks = [this.endpointSphere(a), this.endpointSphere(b)];
+        },
+
+        endpointSphere(p) {
+            if (!this._sphGeo) this._sphGeo = new THREE.SphereGeometry(0.06 * UNITS_PER_METER, 10, 8);
+            if (!this._sphMat) this._sphMat = new THREE.MeshBasicMaterial({
+                color: srgbHex(0xfacc15), depthTest: false, transparent: true, opacity: 0.98
+            });
+            const m = new THREE.Mesh(this._sphGeo, this._sphMat);
+            m.position.copy(p); m.renderOrder = 4; m.frustumCulled = false;
+            scene.add(m);
+            return m;
         },
 
         castRay(origin, dir) {
@@ -1853,7 +1911,7 @@
             el.className = 'dim-label';
             el.textContent = text;
             $('dim-labels').appendChild(el);
-            const dim = { line: null, labelEl: el, mid: null, kind: kind || 'len' };
+            const dim = { line: null, labelEl: el, mid: null, kind: kind || 'len', marks: [] };
             this.dims.push(dim);
             return dim;
         },
@@ -1875,6 +1933,7 @@
         clearDims() {
             for (const d of this.dims) {
                 if (d.line) { scene.remove(d.line); d.line.geometry.dispose(); }
+                if (d.marks) for (const m of d.marks) scene.remove(m);
                 d.labelEl.remove();
             }
             this.dims = [];
@@ -2015,8 +2074,26 @@
         el.addEventListener('pointerdown', (e) => {
             cancelWalk();  // grabbing the scene interrupts the glide
             down = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, multi: down.id !== -1 };
+            // En modo walk el arrastre es "mirar": tomamos el puntero.
+            if (walkMode && Measure.mode === 'none' && !down.multi) {
+                look.dragging = true; look.id = e.pointerId;
+                look.lastX = e.clientX; look.lastY = e.clientY;
+                el.setPointerCapture(e.pointerId);
+            }
+        });
+        el.addEventListener('pointermove', (e) => {
+            if (!look.dragging || e.pointerId !== look.id) return;
+            const dx = e.clientX - look.lastX, dy = e.clientY - look.lastY;
+            look.lastX = e.clientX; look.lastY = e.clientY;
+            const sens = 0.0042;
+            // Sin inversión: derecha -> mira a la derecha; arriba -> mira arriba.
+            look.yaw   += dx * sens;
+            look.pitch += dy * sens;
+            look.pitch = THREE.MathUtils.clamp(look.pitch, -1.45, 1.45);
+            applyLook();
         });
         el.addEventListener('pointerup', (e) => {
+            if (look.dragging && e.pointerId === look.id) look.dragging = false;
             if (e.pointerId !== down.id || down.multi) { down.id = -1; return; }
             down.id = -1;
             const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
@@ -2086,9 +2163,38 @@
         highlightMesh = null;
     }
 
+    // Modo fantasma: al seleccionar, el resto del modelo se vuelve
+    // translúcido para que la pieza resaltada se lea sin estorbos. Los
+    // materiales están compartidos, así que se recorren una sola vez.
+    let ghostOn = false;
+    function setGhost(on) {
+        if (on === ghostOn) return;
+        ghostOn = on;
+        const seen = new Set();
+        for (const part of meshParts) {
+            const m = part.material;
+            if (seen.has(m)) continue;
+            seen.add(m);
+            if (on) {
+                if (!m.userData._orig) m.userData._orig = { transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite };
+                m.transparent = true;
+                m.opacity = m.userData.isGlass ? 0.06 : 0.12;
+                m.depthWrite = false;
+            } else if (m.userData._orig) {
+                m.transparent = m.userData._orig.transparent;
+                m.opacity = m.userData._orig.opacity;
+                m.depthWrite = m.userData._orig.depthWrite;
+                m.userData._orig = null;
+            }
+            m.needsUpdate = true;
+        }
+        markDirty();
+    }
+
     function select(id) {
         clearHighlight();
         selectedId = id;
+        setGhost(true);   // atenúa el resto para resaltar lo seleccionado
 
         const inst = tbvData.instances[id];
         const src = tbvData.meshes[inst.meshIdx];
@@ -2143,6 +2249,7 @@
         if (selectedId === null) return;
         selectedId = null;
         clearHighlight();
+        setGhost(false);   // restaura la opacidad del resto
         document.body.classList.remove('info-open');
         const panel = $('info-panel');
         panel.classList.remove('show');
@@ -2283,8 +2390,8 @@
         if (updateMovement(dt)) markDirty();
         if (Gyro.apply()) markDirty();
         // OrbitControls' update() re-aims the camera at its target, which
-        // would overwrite the gyroscope orientation every frame.
-        if (!Gyro.active) controls.update();  // damping fires 'change' -> markDirty
+        // would overwrite the gyroscope orientation or the first-person look.
+        if (!Gyro.active && !walkMode) controls.update();  // damping fires 'change' -> markDirty
 
         if (ready && now - lastStats > 500) { lastStats = now; updateStats(); }
 
@@ -2548,7 +2655,9 @@
                 chainPoints: Measure.chain.length,
                 areaLabel: (Measure.dims.find((d) => d.kind === 'area') || {}).labelEl ?
                     Measure.dims.find((d) => d.kind === 'area').labelEl.textContent : null,
-                gyroActive: Gyro.active
+                dimMarks: Measure.dims.reduce((n, d) => n + (d.marks ? d.marks.length : 0), 0),
+                gyroActive: Gyro.active,
+                ghost: ghostOn
             };
         },
         get renderCount() { return renderCount; },
