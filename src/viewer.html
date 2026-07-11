@@ -8,18 +8,21 @@
     <!-- Inline icon: keeps the file self-contained and avoids a /favicon.ico 404. -->
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%233b82f6'/%3E%3Cpath d='M4 11V6l4-2 4 2v5' stroke='white' stroke-width='1.4' fill='none'/%3E%3C/svg%3E">
     <style>
-        /* Tema claro: fondo blanco, textos y controles gris/negro de alto
-           contraste (pedido explícito). Nada de blanco-sobre-blanco. */
+        /* La escena/fondo queda blanco, pero el "chrome" (paneles, botones,
+           menús, minimapa) es de relleno oscuro con contenido blanco. El
+           estado activo invierte a relleno blanco con ícono oscuro. */
         :root {
-            --bg: #ffffff;
+            --bg: #ffffff;               /* fondo de escena y loader */
             --bg-soft: #eef1f5;
-            --panel-bg: rgba(255, 255, 255, 0.94);
-            --panel-border: rgba(0, 0, 0, 0.14);
-            --text-main: #111418;        /* casi negro */
-            --text-muted: #444a52;       /* gris oscuro, legible sobre blanco */
-            --accent: #0b0d10;           /* botón/estado activo: negro puro */
-            --accent-soft: #1e293b;
-            --danger: #b91c1c;
+            --panel-bg: rgba(18, 22, 27, 0.92);   /* chrome oscuro */
+            --panel-border: rgba(255, 255, 255, 0.18);
+            --text-main: #f5f7fa;        /* contenido blanco sobre el chrome */
+            --text-muted: #aab3bd;       /* gris claro, legible sobre oscuro */
+            --accent: #ffffff;           /* estado activo: relleno blanco */
+            --accent-ink: #0b0d10;       /* ícono/texto sobre el activo */
+            --accent-soft: #d1d5db;
+            --on-scene: #1a1e24;         /* texto oscuro sobre el fondo blanco */
+            --danger: #dc2626;
             --safe-t: env(safe-area-inset-top, 0px);
             --safe-b: env(safe-area-inset-bottom, 0px);
             --safe-l: env(safe-area-inset-left, 0px);
@@ -73,9 +76,9 @@
             right: calc(var(--gap) + var(--safe-r));
             width: var(--minimap); height: var(--minimap);
             background: transparent;
-            border: 1px solid rgba(255,255,255,0.22);
+            border: 1.5px solid rgba(255,255,255,0.35);
             border-radius: 4px;
-            box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+            box-shadow: 0 6px 18px rgba(0,0,0,0.55);
             display: none;
             pointer-events: none;
         }
@@ -87,16 +90,17 @@
             right: calc(var(--gap) + var(--safe-r));
             display: flex; flex-direction: column; gap: 8px;
         }
-        .tool-btn { background: #fff; }
+        .tool-btn { background: var(--panel-bg); }
 
         #cat-menu {
             position: absolute; z-index: 16;
             top: calc(var(--gap) * 2 + var(--safe-t) + var(--minimap));
             right: calc(var(--gap) * 2 + var(--safe-r) + 34px);
             width: 190px; max-height: 55dvh; overflow-y: auto;
-            background: #fff;
-            border: 1.5px solid rgba(0,0,0,0.2); border-radius: 12px;
-            box-shadow: 0 12px 30px -8px rgba(0,0,0,0.3);
+            background: var(--panel-bg); color: var(--text-main);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border: 1.5px solid var(--panel-border); border-radius: 12px;
+            box-shadow: 0 12px 30px -8px rgba(0,0,0,0.45);
             padding: 10px;
         }
         .cat-head {
@@ -111,11 +115,11 @@
             display: flex; align-items: center; gap: 8px;
             padding: 5px 4px; border-radius: 8px; font-size: 13px;
         }
-        .cat-row:hover { background: var(--bg-soft); }
+        .cat-row:hover { background: rgba(255,255,255,0.08); }
         .cat-row.cat-off .cat-name { color: var(--text-muted); text-decoration: line-through; }
         .cat-name { flex: 1 1 auto; cursor: pointer; font-weight: 500; }
-        .cat-name:hover { color: var(--accent); text-decoration: underline; }
-        .cat-row input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+        .cat-name:hover { color: #fff; text-decoration: underline; }
+        .cat-row input[type="checkbox"] { accent-color: #fff; width: 15px; height: 15px; }
         .cat-reset { width: 100%; margin-top: 8px; padding: 7px 0; font-size: 12px; }
 
         /* ---------- Dimension labels (always readable, on top of 3D) ---------- */
@@ -208,18 +212,19 @@
         .icon-btn {
             flex: 0 0 auto;
             width: 34px; height: 34px; border-radius: 10px;
-            border: 1.5px solid rgba(0,0,0,0.25);
-            background: #ffffff; color: var(--text-main);
+            border: 1.5px solid var(--panel-border);
+            background: var(--panel-bg); color: var(--text-main);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
             display: flex; align-items: center; justify-content: center;
             cursor: pointer; font-size: 15px; line-height: 1; font-weight: 600;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
             -webkit-tap-highlight-color: transparent;
         }
-        .icon-btn:hover { background: var(--bg-soft); border-color: rgba(0,0,0,0.4); }
-        /* Estado activo: negro pleno, ícono blanco — máximo contraste. */
+        .icon-btn:hover { background: rgba(40,46,54,0.95); border-color: rgba(255,255,255,0.35); }
+        /* Estado activo: relleno blanco, ícono oscuro — inverso del reposo. */
         .tool-btn.tool-active,
         .icon-btn.is-active {
-            background: var(--accent) !important; border-color: var(--accent) !important; color: #fff !important;
+            background: var(--accent) !important; border-color: var(--accent) !important; color: var(--accent-ink) !important;
         }
         #ui-toggle { display: flex; }
         #ui-toggle .chev { transition: transform .25s ease; }
@@ -245,7 +250,7 @@
             cursor: pointer; padding: 0; text-transform: uppercase;
             text-decoration: underline;
         }
-        .link-btn:hover { color: var(--accent); }
+        .link-btn:hover { color: #fff; }
 
         .control-group { margin-bottom: 16px; }
         .control-group label {
@@ -259,19 +264,19 @@
             background: transparent; margin: 0 0 6px 0;
             touch-action: none; cursor: pointer;
         }
-        input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 4px; background: rgba(0,0,0,0.18); border-radius: 2px; }
+        input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; }
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
-            background: var(--accent); margin-top: -6px; border: 2px solid #fff;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.35); transition: transform .1s;
+            background: #fff; margin-top: -6px; border: 2px solid var(--accent-ink);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.5); transition: transform .1s;
         }
         input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
-        input[type="range"]::-moz-range-track { width: 100%; height: 4px; background: rgba(0,0,0,0.18); border-radius: 2px; }
-        input[type="range"]::-moz-range-thumb { height: 16px; width: 16px; border: 2px solid #fff; border-radius: 50%; background: var(--accent); }
+        input[type="range"]::-moz-range-track { width: 100%; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; }
+        input[type="range"]::-moz-range-thumb { height: 16px; width: 16px; border: 2px solid var(--accent-ink); border-radius: 50%; background: #fff; }
 
         .stats {
             font-size: 11px; color: var(--text-muted); margin-top: 18px;
-            background: var(--bg-soft); padding: 12px; border-radius: 10px; line-height: 1.7;
+            background: rgba(255,255,255,0.06); padding: 12px; border-radius: 10px; line-height: 1.7;
         }
         .stats .row { display: flex; justify-content: space-between; gap: 8px; }
         .stats .k { color: var(--text-muted); }
@@ -295,15 +300,17 @@
             transition: opacity .45s ease; padding: 24px; text-align: center;
         }
         #loader.hidden { opacity: 0; pointer-events: none; }
+        /* El loader y el dropzone cubren la escena blanca: texto oscuro. */
+        #loader, #dropzone { color: var(--on-scene); }
         .spinner {
             width: 56px; height: 56px; border: 4px solid rgba(0,0,0,0.12);
-            border-top-color: var(--accent); border-radius: 50%;
+            border-top-color: var(--on-scene); border-radius: 50%;
             animation: spin 1s cubic-bezier(.5,0,.5,1) infinite; margin-bottom: 22px;
         }
         @keyframes spin { 100% { transform: rotate(360deg); } }
         #loader-text { font-weight: 600; letter-spacing: 1px; font-size: 14px; }
         #loader-bar { width: min(280px, 70vw); height: 3px; background: rgba(0,0,0,0.12); border-radius: 2px; margin-top: 18px; overflow: hidden; }
-        #loader-bar > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .2s ease; }
+        #loader-bar > i { display: block; height: 100%; width: 0%; background: var(--on-scene); transition: width .2s ease; }
 
         #dropzone {
             position: absolute; inset: 0; z-index: 90;
@@ -312,21 +319,27 @@
             background: rgba(255,255,255,0.92);
         }
         #dropzone.show { display: flex; }
+        #dropzone h1 { color: var(--on-scene); }
+        #dropzone .subtitle { color: #5a626b; }
         #dropzone .box {
             border: 2px dashed rgba(0,0,0,0.25); border-radius: 20px;
             padding: 40px 32px; max-width: 460px;
         }
+        /* Botón primario: relleno oscuro, texto blanco (legible en el panel
+           oscuro y sobre el dropzone claro). */
         .btn {
             display: inline-block; margin-top: 16px; padding: 10px 18px;
-            background: var(--accent); color: #fff; border: 1.5px solid var(--accent); border-radius: 10px;
+            background: var(--on-scene); color: #fff; border: 1.5px solid var(--on-scene); border-radius: 10px;
             font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
             -webkit-tap-highlight-color: transparent;
         }
-        .btn:hover { background: var(--accent-soft); }
-        .btn.btn-ghost { background: #fff; color: var(--text-main); border-color: rgba(0,0,0,0.28); }
-        .btn.btn-ghost:hover { background: var(--bg-soft); }
+        .btn:hover { background: #000; }
+        .btn.btn-ghost { background: transparent; color: var(--text-main); border-color: var(--panel-border); }
+        .btn.btn-ghost:hover { background: rgba(255,255,255,0.08); }
+        /* En el dropzone (fondo claro) el botón fantasma necesita tinta oscura. */
+        #dropzone .btn.btn-ghost { color: var(--on-scene); border-color: rgba(0,0,0,0.28); }
         body.dragging #dropzone { display: flex; }
-        body.dragging #dropzone .box { border-color: var(--accent); background: rgba(0,0,0,0.04); }
+        body.dragging #dropzone .box { border-color: var(--on-scene); background: rgba(0,0,0,0.04); }
 
         #error-stack { position: absolute; top: 0; left: 0; right: 0; z-index: 9999; pointer-events: none; }
         .error-toast {
@@ -337,7 +350,7 @@
 
         .hint {
             position: absolute; bottom: calc(10px + var(--safe-b)); left: 50%; transform: translateX(-50%);
-            font-size: 11px; color: var(--text-muted); z-index: 5; opacity: .7; white-space: nowrap;
+            font-size: 11px; color: var(--on-scene); z-index: 5; opacity: .55; white-space: nowrap;
         }
 
         /* ---------- Phones ---------- */
@@ -454,6 +467,12 @@
                 <label>Este-Oeste (X) <span class="val" id="lbl-x">—</span></label>
                 <input type="range" id="clip-x-min" aria-label="X mínimo">
                 <input type="range" id="clip-x-max" aria-label="X máximo">
+            </div>
+
+            <div class="section-title" style="margin-top:20px"><span>Cámara</span></div>
+            <div class="control-group">
+                <label>Campo de visión <span class="val" id="lbl-fov">—</span></label>
+                <input type="range" id="fov-slider" min="40" max="110" step="1" aria-label="Campo de visión">
             </div>
 
             <div class="stats" id="render-stats"></div>
@@ -594,15 +613,18 @@
     //     slices through. Same idea as the main view's cap hatching.
     // The cut level follows the camera target: orbit the building and you
     // read the mid-level plan; walk into a room and you read that room.
+    // Minimapa invertido: fondo NEGRO, cortes de muro en BLANCO (se entiende
+    // mucho mejor qué está seccionado). Las superficies vistas desde arriba
+    // van en gris medio, subordinadas al blanco de los cortes.
     const minimapClip = clipPlanes.map((p) => p.clone());
     const minimapSurfMaterial = new THREE.MeshBasicMaterial({
-        color: srgbHex(0xdde3ea), side: THREE.FrontSide, clippingPlanes: minimapClip
+        color: srgbHex(0x444c56), side: THREE.FrontSide, clippingPlanes: minimapClip
     });
-    // Pure black: at map scale a wall cut is 1-2 px wide, and antialiasing
-    // averages it with the grey around it — starting from black keeps the
-    // averaged pixel dark enough to still read as a wall.
+    // Blanco puro: a escala de mapa un corte de muro es de 1-2 px y el
+    // antialiasing lo mezcla con el negro del fondo; partir de blanco puro
+    // mantiene el pixel promediado suficientemente claro para leerse.
     const minimapCutMaterial = new THREE.MeshBasicMaterial({
-        color: srgbHex(0x000000), side: THREE.BackSide, clippingPlanes: minimapClip
+        color: srgbHex(0xffffff), side: THREE.BackSide, clippingPlanes: minimapClip
     });
 
     const raycaster = new THREE.Raycaster();
@@ -694,6 +716,7 @@
         setupNavControls();
         setupPanelUi();
         setupToolbar();
+        setupFov();
 
         renderer.setAnimationLoop(animate);
     }
@@ -982,13 +1005,13 @@
     }
 
     function disposeScene() {
+        setGhost(false);           // restaura el material real antes de liberar
         for (const m of meshParts) {
             m.geometry.dispose();
             m.material.dispose();  // shared materials: dispose is idempotent
             mainGroup.remove(m);
         }
         meshParts = [];
-        ghostOn = false;           // el nuevo modelo arranca opaco
         clearHighlight();
         Measure.clear();           // stale dimensions point at the old model
     }
@@ -1341,15 +1364,15 @@
         walkMarker.visible = false;
         if (highlightMesh) highlightMesh.visible = false;
 
-        // Pass 1: top-down surfaces (front faces) in light grey on white.
+        // Pass 1: top-down surfaces (front faces) in mid grey on BLACK.
         scene.overrideMaterial = minimapSurfMaterial;
-        renderer.setClearColor(0xffffff, 1);
+        renderer.setClearColor(0x000000, 1);
         renderer.render(scene, minimapCamera);
 
-        // Pass 2: back faces in near black, sharing the depth buffer. Inside
-        // a wall sliced by the near plane, the nearest surface is a back
-        // face, so the wall's whole footprint wins the depth test and reads
-        // as a solid black cut.
+        // Pass 2: back faces in white, sharing the depth buffer. Inside a
+        // wall sliced by the near plane, the nearest surface is a back face,
+        // so the wall's whole footprint wins the depth test and reads as a
+        // solid white cut over the black background.
         renderer.autoClear = false;
         scene.overrideMaterial = minimapCutMaterial;
         renderer.render(scene, minimapCamera);
@@ -1385,17 +1408,15 @@
         const px = new Uint8Array(w * h * 4);
         gl.readPixels(x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
 
-        let white = 0, dark = 0, gray = 0, red = 0, blue = 0;
+        // Mapa invertido: fondo NEGRO, cortes de muro BLANCOS, superficies gris.
+        let cut = 0, bg = 0, gray = 0, red = 0, blue = 0;
         const total = w * h;
         const hist = new Map();
         for (let i = 0; i < total; i++) {
             const R = px[i * 4], G = px[i * 4 + 1], B = px[i * 4 + 2];
-            if (R > 235 && G > 235 && B > 235) white++;              // background
-            // Cut walls are pure black, but antialiasing mixes 1-2 px lines
-            // with the grey around them: anything clearly darker than the
-            // surface grey counts as cut.
-            else if (R < 150 && G < 155 && B < 165) dark++;
-            else if (R > 150 && G > 150 && B > 150) gray++;          // top-down surfaces
+            if (R > 210 && G > 210 && B > 210) cut++;               // muro seccionado (blanco)
+            else if (R < 40 && G < 40 && B < 40) bg++;              // fondo (negro)
+            else if (R >= 40 && R <= 210 && Math.abs(R - G) < 40 && Math.abs(G - B) < 45) gray++; // superficie
             // A bluish pixel is one where blue clearly dominates the other
             // two channels; the exact tint depends on line AA and blending.
             if (B > 120 && B - R > 60 && B - G > 40) blue++;
@@ -1408,7 +1429,10 @@
         const top = [...hist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
             .map(([k, n]) => [((k >> 8) & 15) * 17, ((k >> 4) & 15) * 17, (k & 15) * 17, n]);
 
-        return { total, white: white / total, dark: dark / total, gray: gray / total, redPixels: red, bluePixels: blue, top };
+        // Se mantienen los alias antiguos (white=fondo, dark=cortes) para no
+        // romper llamadas previas, pero ahora "white" es el fondo negro… mejor
+        // exponer nombres claros: bg, cut, gray.
+        return { total, bg: bg / total, cut: cut / total, gray: gray / total, redPixels: red, bluePixels: blue, top };
     }
 
     // ==================================================================
@@ -1537,6 +1561,40 @@
     const downRay = new THREE.Raycaster();
     const DOWN = new THREE.Vector3(0, -1, 0);
     const FLOOR_REACH = 2.0 * UNITS_PER_METER;   // "máximo 2 m es un suelo"
+
+    // FOV: el slider fija el base. Dentro de una habitación (walkMode) el cono
+    // de visión se abre al doble para ver mucho más, con transición < 1 s.
+    let fovBase = 50;
+    const fovTarget = () => walkMode ? Math.min(fovBase * 2, 120) : fovBase;
+
+    // Transición por reloj (no por frame): dura FOV_ANIM_MS sea cual sea el
+    // frame rate, así se siente igual de fluida en gama baja. Se rearranca
+    // cuando cambia el objetivo (entrar/salir de habitación, mover el slider).
+    const FOV_ANIM_MS = 600;
+    let fovFrom = 50, fovTgtCur = 50, fovT0 = -1e9;
+
+    function updateFov() {
+        const tgt = fovTarget();
+        if (tgt !== fovTgtCur) { fovFrom = camera.fov; fovTgtCur = tgt; fovT0 = performance.now(); }
+        const t = Math.min((performance.now() - fovT0) / FOV_ANIM_MS, 1);
+        if (t >= 1 && camera.fov === tgt) return false;   // ya en el objetivo
+        camera.fov = t >= 1 ? tgt : fovFrom + (tgt - fovFrom) * (t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2,2)/2);
+        camera.updateProjectionMatrix();
+        // Mientras la transición sigue (t<1) devolvemos true para mantener
+        // vivo el loop de render-on-demand y que no se congele a mitad.
+        return true;
+    }
+
+    function setupFov() {
+        const s = $('fov-slider');
+        s.value = fovBase;
+        $('lbl-fov').textContent = fovBase + '°';
+        s.addEventListener('input', () => {
+            fovBase = parseInt(s.value, 10);
+            $('lbl-fov').textContent = fovBase + '°';
+            markDirty();   // updateFov lo animará hacia el nuevo objetivo
+        });
+    }
 
     // Estado del look en primera persona.
     const look = { yaw: 0, pitch: 0, dragging: false, id: -1, lastX: 0, lastY: 0 };
@@ -2167,26 +2225,32 @@
     // translúcido para que la pieza resaltada se lea sin estorbos. Los
     // materiales están compartidos, así que se recorren una sola vez.
     let ghostOn = false;
+    let ghostMaterial = null;
     function setGhost(on) {
         if (on === ghostOn) return;
         ghostOn = on;
-        const seen = new Set();
+
+        if (on && !ghostMaterial) {
+            // Agua cristalina: celeste sólido muy suave, 90% transparente.
+            // MeshBasicMaterial (no el opaco con capping) => sin el patrón
+            // rayado que aparecía al bajar la opacidad del material original.
+            ghostMaterial = new THREE.MeshBasicMaterial({
+                color: srgbHex(0x9fd8ff),
+                transparent: true, opacity: 0.10,
+                side: THREE.FrontSide, depthWrite: false,
+                clippingPlanes: clipPlanes
+            });
+        }
+        // Se intercambia la referencia de material por malla; la geometría y
+        // el material real quedan intactos para restaurar sin recompilar.
         for (const part of meshParts) {
-            const m = part.material;
-            if (seen.has(m)) continue;
-            seen.add(m);
             if (on) {
-                if (!m.userData._orig) m.userData._orig = { transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite };
-                m.transparent = true;
-                m.opacity = m.userData.isGlass ? 0.06 : 0.12;
-                m.depthWrite = false;
-            } else if (m.userData._orig) {
-                m.transparent = m.userData._orig.transparent;
-                m.opacity = m.userData._orig.opacity;
-                m.depthWrite = m.userData._orig.depthWrite;
-                m.userData._orig = null;
+                part.userData._realMat = part.material;
+                part.material = ghostMaterial;
+            } else if (part.userData._realMat) {
+                part.material = part.userData._realMat;
+                part.userData._realMat = null;
             }
-            m.needsUpdate = true;
         }
         markDirty();
     }
@@ -2309,6 +2373,8 @@
 
     function fitCamera() {
         setNavMode(false);   // el encuadre general siempre es vista orbital
+        camera.fov = fovBase;  // encuadrar con el FOV base, sin la animación a medias
+        camera.updateProjectionMatrix();
         const d = tbvData;
         const radius = 0.5 * Math.hypot(
             d.sceneMax[0] - d.sceneMin[0],
@@ -2386,6 +2452,7 @@
         const dt = Math.min(clock.getDelta(), 0.1);
 
         if (boxDirty) { boxDirty = false; applyBox(); markDirty(); }
+        if (updateFov()) markDirty();
         if (updateWalk()) markDirty();
         if (updateMovement(dt)) markDirty();
         if (Gyro.apply()) markDirty();
@@ -2649,6 +2716,9 @@
                 categories: CategoryFilter.cats().map((id) => ({ id, name: catName(id), on: !CategoryFilter.hidden.has(id) })),
                 filterActive: CategoryFilter.hidden.size > 0,
                 navMode: walkMode ? 'walk' : 'orbit',
+                fov: camera.fov,
+                fovBase,
+                fovTarget: fovTarget(),
                 measureMode: Measure.mode,
                 dimCount: Measure.dims.filter((d) => d.line).length,
                 dimLabels: Measure.dims.map((d) => d.labelEl.textContent),

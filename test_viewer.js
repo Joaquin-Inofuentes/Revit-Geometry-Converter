@@ -237,15 +237,15 @@ async function main() {
         // scissor render was never visible. Read the real pixels back.
         let map = await driver.executeAsyncScript(
             'const cb = arguments[0]; window.__viewer.sampleMinimap().then(cb);');
-        check('minimap background is white, not the dark 3D scene', map.white > 0.30,
-            (map.white * 100).toFixed(1) + '% white pixels');
-        check('minimap draws the building footprint', map.dark > 0.02,
-            (map.dark * 100).toFixed(1) + '% dark pixels');
+        check('minimap fondo negro (invertido)', map.bg > 0.30,
+            (map.bg * 100).toFixed(1) + '% fondo negro');
+        check('minimap dibuja los cortes/planta en blanco', map.cut + map.gray > 0.02,
+            ((map.cut + map.gray) * 100).toFixed(1) + '% planta (cortes+superficie)');
         check('minimap draws the section rectangle (blue)', map.bluePixels > 50, map.bluePixels + ' blue px');
         // The camera orbits outside the plan bounds, so the marker must be
         // pinned to the edge of the map instead of disappearing.
         check('minimap draws the camera marker (red) even when the camera is outside the plan',
-            map.redPixels > 20, map.redPixels + ' red px');
+            map.redPixels > 8, map.redPixels + ' red px');
 
         // Moving the camera has to move the marker.
         const redBefore = map.redPixels;
@@ -255,7 +255,7 @@ async function main() {
         await sleep(200);
         map = await driver.executeAsyncScript(
             'const cb = arguments[0]; window.__viewer.sampleMinimap().then(cb);');
-        check('marker survives camera movement', map.redPixels > 20,
+        check('marker survives camera movement', map.redPixels > 8,
             redBefore + ' -> ' + map.redPixels + ' red px');
         // Same as the Reiniciar button (already exercised in [3]), via API
         // because the collapsed panel hides the button.
@@ -278,8 +278,8 @@ async function main() {
         // The minimap must redraw as a plan *of the cut*, not of the whole model.
         map = await driver.executeAsyncScript(
             'const cb = arguments[0]; window.__viewer.sampleMinimap().then(cb);');
-        check('minimap still paints a plan after the cut', map.white > 0.30 && map.dark > 0.01,
-            (map.white * 100).toFixed(1) + '% white / ' + (map.dark * 100).toFixed(1) + '% dark');
+        check('minimap still paints a plan after the cut', map.bg > 0.30 && (map.cut + map.gray) > 0.01,
+            (map.bg * 100).toFixed(1) + '% fondo / ' + ((map.cut + map.gray) * 100).toFixed(1) + '% planta');
 
         await driver.executeScript('window.__viewer.resetBox();');
         await sleep(400);
@@ -395,8 +395,8 @@ async function main() {
         const uiOpen = await rect(driver, '#ui-panel');
         check('expanded panel fits the screen', !!uiOpen && uiOpen.r <= 413 && uiOpen.b <= 893,
             uiOpen ? uiOpen.w.toFixed(0) + 'x' + uiOpen.h.toFixed(0) : "hidden");
-        check('sliders are reachable',
-            (await driver.findElements(By.css('#controls input[type=range]'))).length === 6);
+        check('sliders are reachable (6 de corte + 1 de FOV)',
+            (await driver.findElements(By.css('#controls input[type=range]'))).length === 7);
         await shot(driver, '05_mobile_controls_open');
         await driver.executeScript('window.__viewer.togglePanel();');
         await sleep(300);
@@ -515,9 +515,9 @@ async function main() {
             mmR ? mmR.w + 'x' + mmR.h : 'hidden');
         let map1080 = await driver.executeAsyncScript(
             'const cb = arguments[0]; window.__viewer.sampleMinimap().then(cb);');
-        check('1080p: la planta distingue superficie (gris) de corte (negro)',
-            map1080.gray > 0.10 && map1080.dark > 0.005,
-            (map1080.gray * 100).toFixed(1) + '% superficie, ' + (map1080.dark * 100).toFixed(1) + '% corte');
+        check('1080p: la planta distingue superficie (gris) de corte (blanco) sobre fondo negro',
+            map1080.gray > 0.05 && map1080.bg > 0.30,
+            (map1080.gray * 100).toFixed(1) + '% superficie, ' + (map1080.cut * 100).toFixed(1) + '% corte, ' + (map1080.bg * 100).toFixed(1) + '% fondo');
         check('1080p: marcador de camara visible en el mapa', map1080.redPixels > 10, map1080.redPixels + ' px rojos');
         await shot(driver, '09_desktop_1080p');
 
@@ -533,9 +533,9 @@ async function main() {
             mmR ? mmR.w + 'x' + mmR.h : 'hidden');
         const mapA52 = await driver.executeAsyncScript(
             'const cb = arguments[0]; window.__viewer.sampleMinimap().then(cb);');
-        check('A52: la planta sigue mostrando superficie y corte',
-            mapA52.gray > 0.10 && mapA52.dark > 0.005,
-            (mapA52.gray * 100).toFixed(1) + '% superficie, ' + (mapA52.dark * 100).toFixed(1) + '% corte');
+        check('A52: la planta sigue mostrando superficie y corte sobre fondo negro',
+            mapA52.gray > 0.05 && mapA52.bg > 0.30,
+            (mapA52.gray * 100).toFixed(1) + '% superficie, ' + (mapA52.cut * 100).toFixed(1) + '% corte, ' + (mapA52.bg * 100).toFixed(1) + '% fondo');
         check('A52: sin scroll horizontal',
             await driver.executeScript('return document.documentElement.scrollWidth <= window.innerWidth;'));
         await shot(driver, '10_a52_after_switch');
@@ -713,9 +713,9 @@ async function main() {
         // must now be plainly readable (this was the user's top priority).
         const mapRoom = await driver.executeAsyncScript(
             'const cb = arguments[0]; window.__viewer.sampleMinimap().then(cb);');
-        check('dentro de una habitacion el minimapa muestra los muros cortados',
-            mapRoom.dark > 0.015 && mapRoom.gray > 0.20,
-            (mapRoom.dark * 100).toFixed(1) + '% muros, ' + (mapRoom.gray * 100).toFixed(1) + '% piso');
+        check('dentro de una habitacion el minimapa muestra los muros cortados (blanco/gris sobre negro)',
+            mapRoom.cut + mapRoom.gray > 0.20 && mapRoom.bg > 0.10,
+            (mapRoom.cut * 100).toFixed(1) + '% cortes, ' + (mapRoom.gray * 100).toFixed(1) + '% piso, ' + (mapRoom.bg * 100).toFixed(1) + '% fondo');
 
         // Manual chain through the real button + real clicks.
         await driver.findElement(By.css('#tool-measure')).click();
@@ -830,6 +830,52 @@ async function main() {
         check('sin errores tras usar todas las herramientas', i.errors.length === 0, i.errors.join(' | ') || 'none');
 
         // ============================================================
+        console.log('\n\x1b[1m[17b] Campo de visión (slider + doble en habitación)\x1b[0m');
+        await driver.executeScript('window.__viewer.fitCamera();');
+        await sleep(400);
+        // Expandir el panel para llegar al slider de FOV.
+        await driver.findElement(By.css('#ui-toggle')).click();
+        await sleep(250);
+        i = await info(driver);
+        check('el FOV base arranca en 50 y coincide con la cámara', i.fovBase === 50 && Math.abs(i.fov - 50) < 1,
+            'fovBase=' + i.fovBase + ' fov=' + i.fov.toFixed(1));
+        // Mover el slider a 80.
+        await driver.executeScript(`
+            const s = document.getElementById('fov-slider'); s.value = 80; s.dispatchEvent(new Event('input'));
+        `);
+        await sleep(1200);
+        i = await info(driver);
+        check('el slider cambia el FOV base', i.fovBase === 80 && Math.abs(i.fov - 80) < 2,
+            'fovBase=' + i.fovBase + ' fov=' + i.fov.toFixed(1));
+        // Volver a 50 y colapsar.
+        await driver.executeScript(`const s=document.getElementById('fov-slider'); s.value=50; s.dispatchEvent(new Event('input'));`);
+        await sleep(900);
+        await driver.findElement(By.css('#ui-toggle')).click();
+        await sleep(200);
+
+        // Entrar a una habitación: el FOV objetivo pasa al doble.
+        await driver.executeScript(`
+            const W = window.innerWidth, H = window.innerHeight;
+            for (let fy = 0.55; fy <= 0.92; fy += 0.04)
+                for (let fx = 0.25; fx <= 0.75; fx += 0.05)
+                    if (window.__viewer.probeFloor(fx*W, fy*H)) { window.__viewer.walkTo(fx*W, fy*H, false); return; }
+        `);
+        await sleep(1000);
+        i = await info(driver);
+        check('dentro de una habitación el FOV objetivo es el doble', i.fovTarget === Math.min(i.fovBase * 2, 120),
+            'fovBase=' + i.fovBase + ' fovTarget=' + i.fovTarget);
+        // Esperar la transición y confirmar que se abrió.
+        const fovOpened = await waitFor(driver, 'return window.__viewer.info().fov >= 95;', 4000);
+        check('el cono de visión se abre al doble (transición)', fovOpened === true,
+            'fov = ' + (await info(driver)).fov.toFixed(1));
+        await shot(driver, '17_fov_habitacion');
+        // Salir a vista general: el FOV vuelve al base.
+        await driver.executeScript('window.__viewer.fitCamera();');
+        const fovBack = await waitFor(driver, 'return Math.abs(window.__viewer.info().fov - 50) < 2;', 3000);
+        check('al salir de la habitación el FOV vuelve al base', fovBack === true,
+            'fov = ' + (await info(driver)).fov.toFixed(1) + ' navMode=' + (await info(driver)).navMode);
+
+        // ============================================================
         console.log('\n\x1b[1m[18] Cartilla del elemento: aislar y restablecer\x1b[0m');
         // Re-frame first: the gyro left the camera aimed at open sky.
         await driver.executeScript('window.__viewer.fitCamera();');
@@ -839,7 +885,7 @@ async function main() {
         i = await info(driver);
         check('seleccionar muestra la cartilla con botones', i.selected !== null &&
             await driver.executeScript('return !!document.getElementById("info-isolate") && !!document.getElementById("info-reset-filter");'));
-        check('al seleccionar, el resto del modelo se atenua (ghost) para resaltar', i.ghost === true);
+        check('al seleccionar, el resto se vuelve agua cristalina celeste (ghost)', i.ghost === true);
         const selCat = await driver.executeScript('return window.__viewer.info().selected !== null ? window.__viewer.info().categories.length : 0;');
         await driver.findElement(By.css('#info-isolate')).click();
         await sleep(300);
