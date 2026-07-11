@@ -47,6 +47,31 @@
         #canvas-container { position: absolute; inset: 0; z-index: 1; }
         #canvas-container canvas { display: block; }
 
+        /* Cámara RA: el video de fondo (z-index 0) queda detrás del canvas
+           transparente (z-index 1); la geometría se dibuja al 50% encima. */
+        #ar-video {
+            position: absolute; inset: 0; z-index: 0;
+            width: 100%; height: 100%; object-fit: cover;
+            display: none; background: #000;
+        }
+        body.ar-on #ar-video { display: block; }
+        body.ar-on { background: #000 !important; }
+
+        /* Retícula central: marca el punto del láser en modo giroscopio. */
+        #reticle {
+            position: absolute; top: 50%; left: 50%; z-index: 22;
+            width: 22px; height: 22px; margin: -11px 0 0 -11px;
+            border: 2px solid rgba(255,255,255,0.9); border-radius: 50%;
+            box-shadow: 0 0 0 1px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(0,0,0,0.5);
+            display: none; pointer-events: none;
+        }
+        #reticle::after {
+            content: ''; position: absolute; top: 50%; left: 50%;
+            width: 3px; height: 3px; margin: -1.5px 0 0 -1.5px;
+            background: #ff5252; border-radius: 50%;
+        }
+        body.gyro-on #reticle { display: block; }
+
         .glass-panel {
             position: absolute; z-index: 10;
             background: var(--panel-bg);
@@ -61,7 +86,9 @@
             top: calc(var(--gap) + var(--safe-t));
             left: calc(var(--gap) + var(--safe-l));
             width: 300px;
-            max-height: calc(100dvh - 2 * var(--gap) - var(--safe-t) - var(--safe-b));
+            /* Reserva ~190px abajo-izquierda para el joystick: expandido, el
+               panel deja de montarse sobre el stick. */
+            max-height: calc(100dvh - var(--gap) - var(--safe-t) - var(--safe-b) - 190px);
             display: flex; flex-direction: column;
         }
         /* The plan view is painted by the WebGL renderer into a scissor
@@ -150,17 +177,17 @@
             display: none; position: absolute;
             bottom: calc(30px + var(--safe-b)); left: calc(30px + var(--safe-l));
             width: 140px; height: 140px;
-            background: rgba(255,255,255,0.7);
-            border-radius: 50%; border: 1.5px solid rgba(0,0,0,0.22);
+            background: var(--panel-bg);
+            border-radius: 50%; border: 1.5px solid var(--panel-border);
             z-index: 20; touch-action: none;
-            box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+            box-shadow: 0 4px 14px rgba(0,0,0,0.35);
         }
         #joystick-knob {
             position: absolute; top: 50%; left: 50%;
             width: 60px; height: 60px;
             margin: -30px 0 0 -30px;
-            background: var(--accent); border-radius: 50%;
-            box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+            background: #ffffff; border-radius: 50%;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.5);
             pointer-events: none;
             transition: transform .08s ease-out;
         }
@@ -173,14 +200,14 @@
         }
         .elev-btn {
             width: 60px; height: 60px;
-            background: rgba(255,255,255,0.9);
-            border: 1.5px solid rgba(0,0,0,0.25);
+            background: var(--panel-bg);
+            border: 1.5px solid var(--panel-border);
             border-radius: 50%; color: var(--text-main); font-size: 22px; font-weight: 700;
             touch-action: none; -webkit-tap-highlight-color: transparent;
-            box-shadow: 0 3px 10px rgba(0,0,0,0.18);
+            box-shadow: 0 3px 10px rgba(0,0,0,0.35);
             display: flex; align-items: center; justify-content: center; cursor: pointer;
         }
-        .elev-btn.pressed { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .elev-btn.pressed { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 
         /* Info panel open on phones hides the movement controls so nothing overlaps */
         body.info-open #joystick-container,
@@ -418,6 +445,9 @@
         </div>
     </div>
 
+    <!-- Fondo de cámara para el modo RA: el canvas (transparente) va encima. -->
+    <video id="ar-video" playsinline autoplay muted></video>
+
     <div id="canvas-container"></div>
 
     <div id="minimap-box"></div>
@@ -432,9 +462,12 @@
         <button class="icon-btn tool-btn" id="tool-measure-reset" title="Restablecer cota" aria-label="Restablecer cota" style="display:none">⌫</button>
         <button class="icon-btn tool-btn" id="tool-gyro" title="Giroscopio" aria-label="Giroscopio">◎</button>
         <button class="icon-btn tool-btn" id="tool-north" title="Calibrar norte" aria-label="Calibrar norte" style="display:none">N</button>
+        <button class="icon-btn tool-btn" id="tool-camera" title="Cámara (RA)" aria-label="Cámara realidad aumentada">◉</button>
     </div>
     <div id="cat-menu" style="display:none"></div>
     <div id="dim-labels"></div>
+    <!-- Retícula central: aparece con el giroscopio; marca el punto del láser. -->
+    <div id="reticle"></div>
 
     <div id="ui-panel" class="glass-panel">
         <div class="panel-head">
@@ -1589,6 +1622,12 @@
         el.className = 'error-toast';
         el.textContent = label + ': ' + detail;
         errorStack.appendChild(el);
+        // Los toasts se auto-eliminan: si se acumulan (p.ej. reintentos de
+        // permiso) terminan tapando el botón de colapsar/expandir en la
+        // esquina superior izquierda, que queda inutilizable.
+        setTimeout(() => el.remove(), 7000);
+        // Cota de seguridad: nunca más de 4 toasts visibles a la vez.
+        while (errorStack.children.length > 4) errorStack.removeChild(errorStack.firstChild);
     }
 
     window.addEventListener('error', (e) => {
@@ -1608,7 +1647,7 @@
     // State
     // ------------------------------------------------------------------
     let scene, camera, renderer, controls, clock;
-    let minimapCamera, minimapScene, minimapMarker, minimapRect;
+    let minimapCamera, minimapScene, minimapMarker, minimapDot, minimapRect;
     let mainGroup = new THREE.Group();
     let sectionBoxMesh, highlightMesh, walkMarker;
 
@@ -2057,6 +2096,7 @@
 
     function disposeScene() {
         setGhost(false);           // restaura el material real antes de liberar
+        arDim = false;             // el próximo modelo arranca con opacidad normal
         for (const m of meshParts) {
             m.geometry.dispose();
             m.material.dispose();  // shared materials: dispose is idempotent
@@ -2291,18 +2331,33 @@
     function buildMinimapOverlay() {
         minimapScene = new THREE.Scene();
 
-        // Camera marker: a triangle in the XZ plane pointing at -Z.
-        const g = new THREE.BufferGeometry();
-        g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-            0, 0, -1.6,
-            -1.0, 0, 1.0,
-            1.0, 0, 1.0
-        ]), 3));
-        minimapMarker = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
-            color: srgbHex(0xef4444), side: THREE.DoubleSide, depthTest: false, transparent: true
+        // Cono de visión: un sector (abanico) en el plano XZ que abre según
+        // el FOV horizontal y apunta a -Z. Muestra hacia dónde se mira y qué
+        // tan amplio es el campo. Alpha 0.8 (bien visible sobre el mapa negro).
+        // El apex está en el origen (posición de la cámara); radio unitario.
+        const CONE_SEGS = 14;
+        const coneGeo = new THREE.BufferGeometry();
+        // apex + (SEGS+1) puntos del arco => SEGS triángulos.
+        coneGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((CONE_SEGS + 2) * 3), 3));
+        const coneIdx = [];
+        for (let s = 0; s < CONE_SEGS; s++) coneIdx.push(0, s + 1, s + 2);
+        coneGeo.setIndex(coneIdx);
+        minimapMarker = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
+            color: srgbHex(0xffd34d), side: THREE.DoubleSide, depthTest: false,
+            transparent: true, opacity: 0.8
         }));
         minimapMarker.renderOrder = 2;
+        minimapMarker.userData.segs = CONE_SEGS;
         minimapScene.add(minimapMarker);
+
+        // Punto de posición (apex del cono) para ubicarse con precisión.
+        const dotGeo = new THREE.CircleGeometry(1, 12);
+        minimapDot = new THREE.Mesh(dotGeo, new THREE.MeshBasicMaterial({
+            color: srgbHex(0xff5252), side: THREE.DoubleSide, depthTest: false, transparent: true
+        }));
+        minimapDot.rotation.x = -Math.PI / 2;   // acostado en el plano XZ
+        minimapDot.renderOrder = 3;
+        minimapScene.add(minimapDot);
 
         // Outline of the section box footprint.
         const rectGeo = new THREE.BufferGeometry();
@@ -2390,20 +2445,33 @@
         minimapCamera.lookAt(cx, extent.max[1], cz);
         minimapCamera.updateProjectionMatrix();
 
-        // Marker follows the live camera position and heading. When the
-        // camera orbits outside the plan bounds it is pinned to the edge of
-        // the map rather than disappearing, so it always shows where you are
-        // looking from.
-        const mk = half * 0.045;
-        const inset = mk * 1.8;
+        // El cono de visión sigue posición y rumbo de la cámara, y su
+        // apertura refleja el FOV horizontal actual. Si la cámara orbita
+        // fuera del plano, se ancla al borde para no desaparecer.
+        const coneLen = half * 0.42;   // largo del cono
+        const inset = coneLen * 0.15;
+        const px = clamp(camera.position.x, cx - half + inset, cx + half - inset);
+        const pz = clamp(camera.position.z, cz - half + inset, cz + half - inset);
+        const py = extent.max[1] + modelSize * 0.5;
+
         camera.getWorldDirection(markerDir);
-        minimapMarker.position.set(
-            clamp(camera.position.x, cx - half + inset, cx + half - inset),
-            extent.max[1] + modelSize * 0.5,
-            clamp(camera.position.z, cz - half + inset, cz + half - inset)
-        );
-        minimapMarker.scale.setScalar(mk);
-        minimapMarker.rotation.y = Math.atan2(-markerDir.x, -markerDir.z);
+        const heading = Math.atan2(-markerDir.x, -markerDir.z);
+        const hFov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect);
+
+        // Reconstruye el abanico: apex + arco de ±hFov/2 a distancia coneLen.
+        const cp = minimapMarker.geometry.attributes.position;
+        const segs = minimapMarker.userData.segs;
+        cp.setXYZ(0, 0, 0, 0);   // apex (local)
+        for (let s = 0; s <= segs; s++) {
+            const a = -hFov / 2 + (hFov * s) / segs;
+            cp.setXYZ(s + 1, Math.sin(a) * coneLen, 0, -Math.cos(a) * coneLen);
+        }
+        cp.needsUpdate = true;
+        minimapMarker.position.set(px, py, pz);
+        minimapMarker.rotation.y = heading;
+
+        minimapDot.position.set(px, py + 0.01, pz);
+        minimapDot.scale.setScalar(half * 0.03);
 
         renderer.setViewport(r.left, vy, r.width, r.height);
         renderer.setScissor(r.left, vy, r.width, r.height);
@@ -2460,7 +2528,7 @@
         gl.readPixels(x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
 
         // Mapa invertido: fondo NEGRO, cortes de muro BLANCOS, superficies gris.
-        let cut = 0, bg = 0, gray = 0, red = 0, blue = 0;
+        let cut = 0, bg = 0, gray = 0, red = 0, blue = 0, yellow = 0;
         const total = w * h;
         const hist = new Map();
         for (let i = 0; i < total; i++) {
@@ -2473,6 +2541,8 @@
             if (B > 120 && B - R > 60 && B - G > 40) blue++;
             // Likewise a reddish pixel: red clearly dominates.
             if (R > 120 && R - G > 60 && R - B > 60) red++;
+            // Yellow (cono de visión): rojo y verde altos, azul claramente bajo.
+            if (R > 140 && G > 110 && B < 120 && R - B > 60 && G - B > 30) yellow++;
 
             const key = ((R >> 4) << 8) | ((G >> 4) << 4) | (B >> 4);
             hist.set(key, (hist.get(key) || 0) + 1);
@@ -2483,7 +2553,10 @@
         // Se mantienen los alias antiguos (white=fondo, dark=cortes) para no
         // romper llamadas previas, pero ahora "white" es el fondo negro… mejor
         // exponer nombres claros: bg, cut, gray.
-        return { total, bg: bg / total, cut: cut / total, gray: gray / total, redPixels: red, bluePixels: blue, top };
+        return {
+            total, bg: bg / total, cut: cut / total, gray: gray / total,
+            redPixels: red, bluePixels: blue, yellowPixels: yellow, top
+        };
     }
 
     // ==================================================================
@@ -2691,8 +2764,9 @@
         } else {
             // Pivote a distancia cómoda para volver a orbitar.
             controls.target.copy(camera.position).addScaledVector(moveDir, Math.max(8 * UNITS_PER_METER, modelSize * 0.05));
-            controls.enabled = true;
-            controls.update();
+            // Si el giroscopio sigue activo, la orientación la sigue
+            // manejando él: no le devolvemos el control a OrbitControls.
+            if (!Gyro.active) { controls.enabled = true; controls.update(); }
         }
         markDirty();
     }
@@ -2887,6 +2961,51 @@
             else if (this.mode === 'rays') this.spatial(p);
         },
 
+        // Punto del CENTRO de pantalla (donde apunta el láser del giroscopio).
+        centerPoint() {
+            return this.surfacePoint(window.innerWidth / 2, window.innerHeight / 2);
+        },
+        clickCenter() {
+            const p = this.centerPoint();
+            if (!p) return;
+            if (this.mode === 'chain') this.addChainPoint(p);
+            else if (this.mode === 'rays') this.spatial(p);
+        },
+
+        // Preview en vivo: con giroscopio + cadena abierta, dibuja un segmento
+        // provisional desde el último punto hasta donde apunta el láser, y lo
+        // va "arrastrando" mientras girás el celu, hasta el próximo click.
+        updatePreview() {
+            const show = Gyro.active && this.mode === 'chain' && this.chain.length > 0;
+            if (!show) { if (this._preview) { this._preview.line.visible = false; this._preview.el.style.display = 'none'; } return; }
+            const a = this.chain[this.chain.length - 1];
+            const b = this.centerPoint();
+            if (!this._preview) {
+                const geo = new THREE.BufferGeometry();
+                geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+                const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+                    color: srgbHex(0xffd34d), depthTest: false, transparent: true, opacity: 0.7
+                }));
+                line.renderOrder = 3; line.frustumCulled = false; scene.add(line);
+                const el = document.createElement('div');
+                el.className = 'dim-label'; $('dim-labels').appendChild(el);
+                this._preview = { line, el };
+            }
+            const dist = b ? a.distanceTo(b) : 0;
+            // Recién puesto el punto, el láser sigue en el mismo lugar: ocultar
+            // el preview hasta que el usuario mueva el celular una distancia
+            // perceptible, para no superponer un chip "0,00 m" fantasma.
+            if (!b || dist < 0.03 * UNITS_PER_METER) { this._preview.line.visible = false; this._preview.el.style.display = 'none'; return; }
+            const p = this._preview.line.geometry.attributes.position;
+            p.setXYZ(0, a.x, a.y, a.z); p.setXYZ(1, b.x, b.y, b.z); p.needsUpdate = true;
+            this._preview.line.visible = true;
+            const mid = a.clone().add(b).multiplyScalar(0.5).project(camera);
+            this._preview.el.textContent = fmtM(dist / UNITS_PER_METER);
+            this._preview.el.style.display = mid.z < 1 ? 'block' : 'none';
+            this._preview.el.style.left = ((mid.x * 0.5 + 0.5) * window.innerWidth) + 'px';
+            this._preview.el.style.top = ((-mid.y * 0.5 + 0.5) * window.innerHeight) + 'px';
+        },
+
         // ---- Cadena manual contigua ----
         addChainPoint(p) {
             const prev = this.chain[this.chain.length - 1];
@@ -3053,6 +3172,7 @@
             this.clearDims();
             this.chain = [];
             if (this._areaMesh) { scene.remove(this._areaMesh); this._areaMesh.geometry.dispose(); this._areaMesh = null; }
+            if (this._preview) { this._preview.line.visible = false; this._preview.el.style.display = 'none'; }
             markDirty();
         },
 
@@ -3063,6 +3183,134 @@
     };
 
     const fmtM = (m) => m.toFixed(2).replace('.', ',') + ' m';
+
+    // ==================================================================
+    // MODULE: Laser — rayo desde el centro de la cámara al primer impacto.
+    // Se muestra con el giroscopio activo: apuntás con el celu y el láser
+    // marca dónde caería la cota. Un punto en el extremo señala el impacto.
+    // ==================================================================
+    const Laser = {
+        line: null, dot: null, hit: null,
+        _o: new THREE.Vector3(), _d: new THREE.Vector3(),
+
+        ensure() {
+            if (this.line) return;
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+            this.line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+                color: srgbHex(0xff3b30), depthTest: false, transparent: true, opacity: 0.85
+            }));
+            this.line.renderOrder = 5; this.line.frustumCulled = false;
+            this.line.visible = false; scene.add(this.line);
+            this.dot = new THREE.Mesh(
+                new THREE.SphereGeometry(0.05 * UNITS_PER_METER, 10, 8),
+                new THREE.MeshBasicMaterial({ color: srgbHex(0xff3b30), depthTest: false })
+            );
+            this.dot.renderOrder = 6; this.dot.frustumCulled = false;
+            this.dot.visible = false; scene.add(this.dot);
+        },
+
+        // Devuelve el punto de impacto (o null). Actualiza la línea/dot.
+        update(show) {
+            this.ensure();
+            if (!show || !tbvData) { this.line.visible = this.dot.visible = false; this.hit = null; return null; }
+            this._o.copy(camera.position);
+            camera.getWorldDirection(this._d);
+            raycaster.set(this._o, this._d);
+            raycaster.far = modelSize * 3;
+            const eps = modelSize * 1e-4;
+            let hit = null;
+            for (const h of raycaster.intersectObjects(visibleParts(), false)) {
+                if (pointInBox(h.point, eps)) { hit = h.point; break; }
+            }
+            raycaster.far = Infinity;
+            const end = hit || this._o.clone().addScaledVector(this._d, modelSize * 0.5);
+            const p = this.line.geometry.attributes.position;
+            p.setXYZ(0, this._o.x, this._o.y, this._o.z);
+            p.setXYZ(1, end.x, end.y, end.z); p.needsUpdate = true;
+            this.line.visible = true;
+            this.dot.visible = !!hit;
+            if (hit) this.dot.position.copy(hit);
+            this.hit = hit ? hit.clone() : null;
+            return this.hit;
+        }
+    };
+
+    // ==================================================================
+    // MODULE: ARCamera — cámara del dispositivo de fondo (RA simple).
+    // getUserMedia coloca el video detrás del canvas transparente y la
+    // geometría se dibuja al 50%. Pensado para combinar con el giroscopio.
+    // ==================================================================
+    const ARCamera = {
+        active: false, stream: null,
+
+        async toggle() {
+            if (this.active) return this.disable();
+            if (!window.isSecureContext) {
+                reportError('CÁMARA', 'La cámara necesita HTTPS. Abrí la app por https:// (Vercel) o localhost.');
+                return;
+            }
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                reportError('CÁMARA', 'Este navegador no permite acceder a la cámara.');
+                return;
+            }
+            try {
+                this.stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: 'environment' } }, audio: false
+                });
+            } catch (err) {
+                const n = err && err.name;
+                if (n === 'NotAllowedError') reportError('CÁMARA', 'Permiso de cámara denegado.');
+                else if (n === 'NotFoundError') reportError('CÁMARA', 'No se encontró ninguna cámara.');
+                else reportError('CÁMARA', 'No se pudo abrir la cámara: ' + (err && err.message || err));
+                return;
+            }
+            const v = $('ar-video');
+            v.srcObject = this.stream;
+            try { await v.play(); } catch (_) {}
+            document.body.classList.add('ar-on');
+            setModelOpacity(true);   // geometría al 50% sobre el video
+            this.active = true;
+            $('tool-camera').classList.add('tool-active');
+            markDirty();
+        },
+
+        disable() {
+            this.active = false;
+            if (this.stream) { this.stream.getTracks().forEach((t) => t.stop()); this.stream = null; }
+            const v = $('ar-video'); v.srcObject = null;
+            document.body.classList.remove('ar-on');
+            setModelOpacity(false);
+            $('tool-camera').classList.remove('tool-active');
+            markDirty();
+        }
+    };
+
+    // Opacidad global del modelo (para RA): materiales reales al 50%. A
+    // diferencia del ghost (que cambia el material a celeste), acá se conserva
+    // el color real, sólo se baja la opacidad.
+    let arDim = false;
+    function setModelOpacity(on) {
+        if (on === arDim) return;
+        arDim = on;
+        const seen = new Set();
+        for (const part of meshParts) {
+            const m = part.material;
+            if (seen.has(m)) continue;
+            seen.add(m);
+            if (on) {
+                if (!m.userData._arOrig) m.userData._arOrig = { transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite };
+                m.transparent = true; m.opacity = 0.5; m.depthWrite = false;
+            } else if (m.userData._arOrig) {
+                m.transparent = m.userData._arOrig.transparent;
+                m.opacity = m.userData._arOrig.opacity;
+                m.depthWrite = m.userData._arOrig.depthWrite;
+                m.userData._arOrig = null;
+            }
+            m.needsUpdate = true;
+        }
+        markDirty();
+    }
 
     // ==================================================================
     // MODULE: Gyro — orient the camera with the phone's gyroscope.
@@ -3086,23 +3334,65 @@
 
         async toggle() {
             if (this.active) return this.disable();
-            // iOS requires an explicit permission grant from a user gesture.
+
+            // El sensor de orientación sólo funciona en contexto seguro
+            // (HTTPS o localhost). En http plano iOS/Android lo bloquean.
+            if (!window.isSecureContext) {
+                reportError('GIROSCOPIO', 'Necesita HTTPS. Abrí la app por https:// (Vercel ya lo es) o localhost.');
+                return;
+            }
+            if (typeof DeviceOrientationEvent === 'undefined') {
+                reportError('GIROSCOPIO', 'Este dispositivo/navegador no expone el sensor de orientación.');
+                return;
+            }
+
+            // iOS 13+ exige pedir permiso desde un gesto del usuario (este click).
             try {
-                if (typeof DeviceOrientationEvent !== 'undefined' &&
-                    typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    if (await DeviceOrientationEvent.requestPermission() !== 'granted') return;
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    const res = await DeviceOrientationEvent.requestPermission();
+                    if (res !== 'granted') {
+                        reportError('GIROSCOPIO', 'Permiso de movimiento denegado. Activalo en Ajustes › Safari › Movimiento y orientación.');
+                        return;
+                    }
                 }
-            } catch (_) { /* no permission API: just listen */ }
+            } catch (err) {
+                reportError('GIROSCOPIO', 'No se pudo pedir permiso de movimiento: ' + (err && err.message || err));
+                return;
+            }
 
             this.active = true;
+            this._got = false;
             this._needCalib = true;   // first event maps device heading -> current view
             window.addEventListener('deviceorientation', this._onEvent);
+            // Se bloquea la rotación por dedos: sólo el giroscopio mueve la vista.
             controls.enabled = false;
+            look.dragging = false;
+            document.body.classList.add('gyro-on');
             $('tool-gyro').classList.add('tool-active');
             $('tool-north').style.display = 'flex';
+            markDirty();
+
+            // Si en 1,2 s no llegó ni un evento, el sensor no está emitiendo.
+            // La causa más común en Android/Chrome no es un permiso con diálogo
+            // (esa API es sólo de iOS): es el permiso de sitio "Sensores de
+            // movimiento", que puede estar en "Bloqueado" desde antes.
+            setTimeout(() => {
+                if (this.active && !this._got) {
+                    const ua = navigator.userAgent || '';
+                    const isAndroid = /Android/i.test(ua);
+                    const isIOS = /iPhone|iPad|iPod/i.test(ua);
+                    const tip = isAndroid
+                        ? 'Tocá el candado 🔒 junto a la URL → Permisos del sitio → activá "Sensores de movimiento", y recargá.'
+                        : isIOS
+                        ? 'Si Safari no mostró el diálogo de permiso, andá a Ajustes › Safari › Movimiento y orientación y activalo, o recargá la página.'
+                        : 'Verificá que el navegador tenga acceso a sensores de movimiento para este sitio.';
+                    reportError('GIROSCOPIO', 'No llegan datos del sensor. ' + tip + ' (¿es una laptop sin giroscopio?)');
+                }
+            }, 1200);
         },
 
         disable() {
+            if (!this.active) return;
             this.active = false;
             window.removeEventListener('deviceorientation', this._onEvent);
             // Hand OrbitControls a target in front of the camera so the view
@@ -3110,8 +3400,9 @@
             camera.getWorldDirection(this._dir);
             const d = Math.max(controls.target.distanceTo(camera.position), modelSize * 0.05);
             controls.target.copy(camera.position).addScaledVector(this._dir, d);
-            controls.enabled = true;
+            controls.enabled = !walkMode;   // en walk sigue el look manual
             controls.update();
+            document.body.classList.remove('gyro-on');
             $('tool-gyro').classList.remove('tool-active');
             $('tool-north').style.display = 'none';
             markDirty();
@@ -3119,6 +3410,7 @@
 
         _onEvent(e) {
             if (e.alpha === null || e.alpha === undefined) return;
+            Gyro._got = true;
             Gyro.data = { alpha: e.alpha, beta: e.beta || 0, gamma: e.gamma || 0 };
             if (Gyro._needCalib) { Gyro._needCalib = false; Gyro.calibrate(); }
             markDirty();
@@ -3167,6 +3459,7 @@
         $('tool-measure-reset').addEventListener('click', () => Measure.reset());
         $('tool-gyro').addEventListener('click', () => Gyro.toggle());
         $('tool-north').addEventListener('click', () => Gyro.calibrate());
+        $('tool-camera').addEventListener('click', () => ARCamera.toggle());
     }
 
     // ==================================================================
@@ -3183,8 +3476,9 @@
         el.addEventListener('pointerdown', (e) => {
             cancelWalk();  // grabbing the scene interrupts the glide
             down = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, multi: down.id !== -1 };
-            // En modo walk el arrastre es "mirar": tomamos el puntero.
-            if (walkMode && Measure.mode === 'none' && !down.multi) {
+            // En modo walk el arrastre es "mirar": tomamos el puntero. Con el
+            // giroscopio activo el arrastre queda bloqueado (sólo mueve el celu).
+            if (walkMode && !Gyro.active && Measure.mode === 'none' && !down.multi) {
                 look.dragging = true; look.id = e.pointerId;
                 look.lastX = e.clientX; look.lastY = e.clientY;
                 el.setPointerCapture(e.pointerId);
@@ -3211,8 +3505,10 @@
 
             // With a dimension tool armed, every tap is a measurement point:
             // selection and walk-to stand aside until the tool is toggled off.
+            // Con giroscopio, el punto se toma del CENTRO (láser), no del tap.
             if (Measure.mode !== 'none') {
-                Measure.click(e.clientX, e.clientY);
+                if (Gyro.active) Measure.clickCenter();
+                else Measure.click(e.clientX, e.clientY);
                 return;
             }
 
@@ -3526,6 +3822,8 @@
         mainPassStats.calls = renderer.info.render.calls;
         mainPassStats.triangles = renderer.info.render.triangles;
 
+        Laser.update(Gyro.active);
+        if (Gyro.active) Measure.updatePreview();
         renderMinimap();
         Measure.updateLabels();
 
@@ -3673,6 +3971,7 @@
     async function LimpiarTodo(clearCache) {
         Measure.clear();
         Gyro.disable();
+        ARCamera.disable();
         CategoryFilter.reset();
         setNavMode(false);
         disposeScene();
@@ -3778,7 +4077,13 @@
                     Measure.dims.find((d) => d.kind === 'area').labelEl.textContent : null,
                 dimMarks: Measure.dims.reduce((n, d) => n + (d.marks ? d.marks.length : 0), 0),
                 gyroActive: Gyro.active,
-                ghost: ghostOn
+                gyroGotData: Gyro._got === true,
+                ghost: ghostOn,
+                laserVisible: !!Laser.line && Laser.line.visible,
+                laserHit: Laser.hit ? Laser.hit.toArray() : null,
+                arActive: ARCamera.active,
+                arDim,
+                lookDragEnabled: walkMode && !Gyro.active
             };
         },
         get renderCount() { return renderCount; },
@@ -3832,6 +4137,7 @@
         // Dimension tools
         setMeasureMode(m) { Measure.setMode(m); },
         measureClick(x, y) { Measure.click(x, y); },
+        measureClickCenter() { Measure.clickCenter(); },
         // Gyroscope
         gyroToggle() { return Gyro.toggle(); },
         gyroCalibrate() { Gyro.calibrate(); },
@@ -3840,6 +4146,8 @@
             camera.getWorldDirection(d);
             return Math.atan2(-d.x, -d.z) * 180 / Math.PI;
         },
+        // AR camera
+        arToggle() { return ARCamera.toggle(); },
         // Public loading API (also on window as CargarBinario/LimpiarTodo)
         cargarBinario: CargarBinario,
         limpiarTodo: LimpiarTodo,

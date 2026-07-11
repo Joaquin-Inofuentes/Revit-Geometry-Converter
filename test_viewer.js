@@ -225,7 +225,17 @@ async function main() {
         // The panel starts collapsed everywhere now: expand it to reach the
         // Reiniciar button, then collapse it back.
         await driver.findElement(By.css('#ui-toggle')).click();
-        await sleep(250);
+        await sleep(300);
+        // Expandido, el panel no debe montarse sobre el joystick ni los
+        // botones de elevación (antes se solapaba feo en desktop).
+        const uiExp = await rect(driver, '#ui-panel');
+        const joyD = await rect(driver, '#joystick-container');
+        const elevD = await rect(driver, '#elev-controls');
+        check('el panel expandido no se solapa con el joystick', !overlaps(uiExp, joyD),
+            JSON.stringify({ ui: uiExp, joy: joyD }));
+        check('el panel expandido no se solapa con los botones de elevacion', !overlaps(uiExp, elevD),
+            JSON.stringify({ ui: uiExp, elev: elevD }));
+        await shot(driver, '00b_panel_expandido_sin_solape');
         await driver.findElement(By.css('#btn-reset')).click();
         await sleep(500);
         await driver.findElement(By.css('#ui-toggle')).click();
@@ -246,6 +256,8 @@ async function main() {
         // pinned to the edge of the map instead of disappearing.
         check('minimap draws the camera marker (red) even when the camera is outside the plan',
             map.redPixels > 8, map.redPixels + ' red px');
+        check('el minimapa dibuja el cono de vision (amarillo, alpha 80%)',
+            map.yellowPixels > 30, map.yellowPixels + ' px amarillos');
 
         // Moving the camera has to move the marker.
         const redBefore = map.redPixels;
@@ -403,6 +415,19 @@ async function main() {
 
         // ============================================================
         console.log('\n\x1b[1m[9] Joystick drag\x1b[0m');
+        // El stick y los botones de elevación deben ser fondo oscuro (antes
+        // habían quedado blancos tras invertir el tema).
+        const joyBg = await driver.executeScript(
+            `return getComputedStyle(document.getElementById('joystick-container')).backgroundColor;`);
+        const elevBg = await driver.executeScript(
+            `return getComputedStyle(document.querySelector('.elev-btn')).backgroundColor;`);
+        const isDark = (rgb) => {
+            const m = rgb.match(/[\d.]+/g).map(Number);
+            return (m[0] + m[1] + m[2]) / 3 < 60;   // promedio bajo = oscuro
+        };
+        check('el fondo del joystick es oscuro', isDark(joyBg), joyBg);
+        check('el fondo de los botones de elevacion es oscuro', isDark(elevBg), elevBg);
+
         before = (await info(driver)).camera;
         const zone = await driver.findElement(By.css('#joystick-container'));
         const actions = driver.actions({ async: true });
@@ -799,22 +824,56 @@ async function main() {
 
         // ============================================================
         console.log('\n\x1b[1m[17] Giroscopio + calibrar norte\x1b[0m');
+        i = await info(driver);
+        check('antes de activar, el look por dedo esta habilitado (fuera de gyro)',
+            i.gyroActive === false);
         await driver.findElement(By.css('#tool-gyro')).click();
         await sleep(200);
         i = await info(driver);
         check('el boton activa el giroscopio', i.gyroActive === true);
+        check('sin datos aun, gotData es false', i.gyroGotData === false);
         check('aparece el boton de calibrar norte',
             await driver.executeScript('return document.getElementById("tool-north").offsetParent !== null;'));
+        check('la reticula central se muestra',
+            await driver.executeScript(`
+                return document.body.classList.contains('gyro-on') &&
+                       getComputedStyle(document.getElementById('reticle')).display !== 'none';
+            `));
+
+        // Chrome de escritorio no expone DeviceOrientationEvent.requestPermission
+        // (esa API es sólo de iOS Safari), así que sin eventos sintéticos el
+        // giroscopio debe reportar el timeout de "no llegan datos" a 1,2 s.
+        await sleep(1500);
+        i = await info(driver);
+        check('sin eventos reales, se reporta el timeout de datos del sensor',
+            i.errors.some((e) => e.includes('GIROSCOPIO') && e.includes('No llegan datos')),
+            i.errors.join(' | '));
 
         const heading = (a) => driver.executeScript(`
             window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: ${a}, beta: 90, gamma: 0 }));
             return new Promise((r) => setTimeout(() => r(window.__viewer.cameraHeading()), 250));
         `);
         const h0 = await heading(0);
+        i = await info(driver);
+        check('tras el primer evento sintetico, gotData pasa a true', i.gyroGotData === true);
         const h90 = await heading(90);
         const delta = ((h90 - h0 + 540) % 360) - 180;
         check('girar el telefono 90 grados gira la camara 90 grados', Math.abs(Math.abs(delta) - 90) < 3,
             'Δ = ' + delta.toFixed(1) + '°');
+
+        // El giroscopio bloquea el look por dedo: arrastrar no debe rotar la cámara.
+        const hBeforeDrag = await driver.executeScript('return window.__viewer.cameraHeading();');
+        {
+            const canvas = await driver.findElement(By.css('#canvas-container canvas'));
+            await driver.actions({ async: true })
+                .move({ origin: canvas, x: 0, y: 0 }).press()
+                .move({ origin: canvas, x: 250, y: 0, duration: 250 }).release().perform();
+        }
+        await sleep(300);
+        const hAfterDrag = await driver.executeScript('return window.__viewer.cameraHeading();');
+        check('con giroscopio activo, arrastrar con el dedo NO rota la camara',
+            Math.abs(((hAfterDrag - hBeforeDrag + 540) % 360) - 180) < 2,
+            'antes=' + hBeforeDrag.toFixed(1) + ' despues=' + hAfterDrag.toFixed(1));
 
         // Calibrate: the current physical direction becomes the current view.
         const hBefore = await driver.executeScript('return window.__viewer.cameraHeading();');
@@ -827,7 +886,97 @@ async function main() {
         await sleep(200);
         i = await info(driver);
         check('apagar el giroscopio devuelve el control orbital', i.gyroActive === false);
-        check('sin errores tras usar todas las herramientas', i.errors.length === 0, i.errors.join(' | ') || 'none');
+        check('apagar el giroscopio esconde la reticula',
+            await driver.executeScript(`return !document.body.classList.contains('gyro-on');`));
+
+        // ============================================================
+        console.log('\n\x1b[1m[17a] Láser + cota manual "arrastrada" por giroscopio\x1b[0m');
+        // La calibración/drag de la sección anterior puede haber dejado la
+        // cámara orientada hacia cualquier lado (el giroscopio sólo cambia
+        // orientación, no posición). Reencuadrar antes de buscar el piso.
+        await driver.executeScript('window.__viewer.fitCamera();');
+        await sleep(400);
+        // El láser sólo tiene sentido dentro de una habitación (hay geometría
+        // cerca) y con el giroscopio activo.
+        const foundFloor = await driver.executeScript(`
+            const W = window.innerWidth, H = window.innerHeight;
+            for (let fy = 0.55; fy <= 0.92; fy += 0.04)
+                for (let fx = 0.25; fx <= 0.75; fx += 0.05)
+                    if (window.__viewer.probeFloor(fx*W, fy*H)) { window.__viewer.walkTo(fx*W, fy*H, false); return true; }
+            return false;
+        `);
+        check('se encuentra un piso para caminar antes del laser', foundFloor === true);
+        await sleep(1400);
+        await driver.findElement(By.css('#tool-gyro')).click();
+        await sleep(200);
+        await heading(10);
+        // Deep in the suite, SwiftShader frame times pueden superar los 250 ms
+        // internos de heading(); se espera un render extra para que
+        // Laser.update() llegue a correr con el nuevo dato del sensor.
+        await sleep(400);
+        i = await info(driver);
+        check('el laser aparece y choca contra la geometria de la habitacion',
+            i.laserVisible === true && Array.isArray(i.laserHit), JSON.stringify(i.laserHit));
+
+        // Cota manual: cada click toma el punto del CENTRO (donde apunta el
+        // láser), no la posición del tap.
+        await driver.findElement(By.css('#tool-measure')).click();
+        await sleep(150);
+        {
+            const canvas = await driver.findElement(By.css('#canvas-container canvas'));
+            await driver.actions({ async: true }).move({ origin: canvas, x: 0, y: 0 }).click().perform();
+        }
+        await sleep(250);
+        i = await info(driver);
+        check('el primer click con laser agrega un punto de cadena', i.chainPoints === 1);
+
+        // "Arrastrar" la cota: girar el celular mueve el segundo extremo en vivo.
+        // Un giro chico (unos pocos grados) alcanza para mover el láser a otro
+        // punto de la MISMA pared sin arriesgarse a apuntar fuera de la
+        // habitación (el punto exacto donde aterrizó el walk varía de corrida
+        // a corrida, así que un giro grande podía mandar el rayo al vacío).
+        let previewVisible = false, chainAfterDrag = 1;
+        for (const delta of [6, 10, 16, 24]) {
+            await heading(10 + delta);
+            chainAfterDrag = (await info(driver)).chainPoints;
+            previewVisible = await waitFor(driver, `
+                const els = [...document.querySelectorAll('.dim-label')];
+                return els.some((el) => el.offsetParent !== null && /m$/.test(el.textContent));
+            `, 1500);
+            if (previewVisible) break;   // el láser sigue sobre geometría: listo
+        }
+        check('mientras se gira, la cota se "arrastra" con un preview en vivo', previewVisible === true);
+
+        {
+            const canvas = await driver.findElement(By.css('#canvas-container canvas'));
+            await driver.actions({ async: true }).move({ origin: canvas, x: 0, y: 0 }).click().perform();
+        }
+        const closed = await waitFor(driver, 'return window.__viewer.info().chainPoints === 2;', 2000);
+        i = await info(driver);
+        check('el segundo click cierra la cota por giroscopio', closed === true && i.dimCount === 1,
+            'chainPoints=' + i.chainPoints + ' dimCount=' + i.dimCount);
+        await shot(driver, '18_laser_cota_gyro');
+
+        await driver.findElement(By.css('#tool-measure')).click();
+        await driver.findElement(By.css('#tool-gyro')).click();
+        await sleep(200);
+        i = await info(driver);
+        check('sin errores tras el flujo completo de laser+cota', i.errors.length ===
+            i.errors.filter((e) => e.includes('No llegan datos')).length,
+            'errores no relacionados al timeout esperado: ' + JSON.stringify(i.errors));
+
+        // ============================================================
+        console.log('\n\x1b[1m[17b2] Cámara RA (modo cámara de fondo)\x1b[0m');
+        await driver.executeScript('window.__viewer.fitCamera();');
+        await sleep(300);
+        await driver.findElement(By.css('#tool-camera')).click();
+        await sleep(700);
+        i = await info(driver);
+        // En este entorno headless no hay cámara física: se espera un error
+        // claro (no un crash) y que arActive quede en false.
+        check('sin camara real, la RA falla con un error claro (no crashea)',
+            i.arActive === false && i.errors.some((e) => e.includes('CÁMARA')),
+            JSON.stringify(i.errors));
 
         // ============================================================
         console.log('\n\x1b[1m[17b] Campo de visión (slider + doble en habitación)\x1b[0m');
@@ -938,9 +1087,13 @@ async function main() {
         `);
         await waitReady(driver, 30000);
         i = await info(driver);
+        // errors.length puede tener el timeout esperado de GIROSCOPIO de la
+        // sección [17] (es acumulativo para toda la sesión); sólo importa que
+        // no haya errores NUEVOS de carga.
+        const nonGyroErrors = i.errors.filter((e) => !e.includes('GIROSCOPIO') && !e.includes('CÁMARA'));
         check('CargarBinario(LeerBinario(base64)) rearma toda la escena',
-            i.ready === true && i.instances === 2635 && i.errors.length === 0,
-            i.instances + ' instancias');
+            i.ready === true && i.instances === 2635 && nonGyroErrors.length === 0,
+            i.instances + ' instancias, errores: ' + JSON.stringify(nonGyroErrors));
 
         // ============================================================
         console.log('\n\x1b[1m[20] Carga local por file:// (doble click al archivo)\x1b[0m');
