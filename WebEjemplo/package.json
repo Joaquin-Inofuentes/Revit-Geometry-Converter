@@ -1,0 +1,26 @@
+{
+  "name": "_revit_exe_geometrias",
+  "version": "1.0.0",
+  "description": "Visor web TBV: convierte src/viewer.html + three.js + export.tbv en un index.html portable de un solo archivo.",
+  "main": "build.js",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "test": "node scripts/build.js && node scripts/test_viewer.js",
+    "test:only": "node scripts/test_viewer.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Joaquin-Inofuentes/Revit-Geometry-Converter.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Joaquin-Inofuentes/Revit-Geometry-Converter/issues"
+  },
+  "homepage": "https://github.com/Joaquin-Inofuentes/Revit-Geometry-Converter#readme",
+  "dependencies": {
+    "selenium-webdriver": "^4.45.0"
+  }
+}

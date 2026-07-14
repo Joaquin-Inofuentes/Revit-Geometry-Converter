@@ -1,0 +1,22 @@
+
+=========== ESTADÍSTICAS ===========
+Formato de entrada:     v3
+Mallas de entrada:      12165
+Piezas de salida:       273 (descartadas vacías: 0)
+Vértices:  232.455 -> soldados 132.652 -> finales 77.897  (33,5% del original)
+Triángulos: 246.568 -> finales 135.545  (55,0% del original)
+Triángulos degenerados eliminados: 1.017
+Piezas chicas sin decimar (cubos/prismas protegidos): 9
+Piezas intactas por categoría protegida (muros/suelos/techos): 4
+Piezas con reintento conservador:  0
+Piezas con fallback (sin decimar): 29
+Piezas rotas detectadas y REPARADAS con geometría original: 0
+Materiales transparentes (vidrio): 0
+Piezas instanciadas (malla compartida): 0
+Geometrías únicas en el .tbv (dedup): 257 de 273 piezas
+Binario de visor (.tbv): 1.902 KB
+OBJ: No exportado   GLB: No exportado
+Tiempo total: 1,1 s
+====================================
+
+VALIDACIÓN FINAL: OK — ninguna pieza rota en la salida.

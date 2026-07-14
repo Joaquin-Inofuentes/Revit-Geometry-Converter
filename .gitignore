@@ -1,16 +1,11 @@
 # Visual Studio ignores
-codigo/**/bin/
-codigo/**/obj/
-temp_simplifier/
+PostProcesadoEXE/Codigo/**/bin/
+PostProcesadoEXE/Codigo/**/obj/
+PostProcesadoEXE/Codigo/references/temp_simplifier/
 
 # Node
-node_modules/
+WebEjemplo/node_modules/
 
-# Salida de la suite de tests (se regenera con `npm test`)
-screenshots/
+# Salida de la suite de tests
+WebEjemplo/screenshots/
 scratch_*.js
-
-# Ignorar archivos generados excesivamente grandes si se desea (opcional)
-# *.obj
-# *.glb
-# *.bin
