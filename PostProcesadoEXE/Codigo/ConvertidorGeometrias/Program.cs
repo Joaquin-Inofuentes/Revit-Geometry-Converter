@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Text;
+using System.Threading;
 using SharpGLTF.Geometry;
 using SharpGLTF.Geometry.VertexTypes;
 using SharpGLTF.Materials;
@@ -94,54 +95,85 @@ namespace ConvertidorGeometrias
             return casiNegro && (m.CategoryId == 0 || m.CategoryId == -2000014 || m.CategoryId == -2000023);
         }
 
+        private const string APP_GUID = "Global\\RevitGeometriaWatcher_JPG_2024";
+        private static readonly string CARPETA_TEMP = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp_R_BIN_Geometrias");
+        private static string RUTA_BASE_SALIDA = @"C:\NO ENTRAR\JPG\DATA";
+        private static string RUTA_LOG = "";
+
         static void Main(string[] args)
         {
-            Console.OutputEncoding = Encoding.UTF8;
-            Console.WriteLine("Iniciando conversión de geometrías...");
-
-            string defaultDir = @"C:\.TBT\Proyectos\_Revit_EXE_Geometrias\PostProcesadoEXE\IN";
-            List<string> filesToProcess = new List<string>();
-            bool pause = !args.Contains("--nopause") && !Console.IsInputRedirected;
-
-            if (args.Length > 0 && !args[0].StartsWith("--"))
+            if (args.Length > 1 && !string.IsNullOrWhiteSpace(args[1]))
             {
-                filesToProcess.Add(args[0]);
+                RUTA_BASE_SALIDA = Path.Combine(args[1], "DATA");
+                RUTA_LOG = Path.Combine(args[0], "Logs", $"Log_Geometria_{DateTime.Now:yyyy-MM-dd}.txt");
             }
             else
             {
-                if (Directory.Exists(defaultDir))
-                {
-                    filesToProcess.AddRange(Directory.GetFiles(defaultDir, "*.bin"));
-                }
+                RUTA_LOG = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Log_Geometria_{DateTime.Now:yyyy-MM-dd}.txt");
             }
 
-            if (filesToProcess.Count == 0)
-            {
-                Console.WriteLine("Error: No se encontraron archivos .bin para procesar.");
-                if (pause) Console.ReadLine();
-                return;
-            }
+            Console.OutputEncoding = Encoding.UTF8;
+            Log("============================================================");
+            Log("        REVIT GEOMETRIAS WATCHER - INICIANDO");
+            Log("============================================================");
 
-            Console.WriteLine($"Se encontraron {filesToProcess.Count} archivo(s) para procesar.");
-
-            foreach (var filePath in filesToProcess)
+            bool createdNew;
+            using (Mutex mutex = new Mutex(true, APP_GUID, out createdNew))
             {
-                if (!File.Exists(filePath))
+                if (!createdNew)
                 {
-                    Console.WriteLine($"Error: No se encontró el archivo '{filePath}'.");
-                    continue;
+                    Log("Ya hay una instancia corriendo. Cerrando esta.");
+                    return; // Ya hay una instancia corriendo
                 }
 
-                Console.WriteLine($"\n==================================================");
-                Console.WriteLine($"Procesando: {filePath}");
-                Console.WriteLine($"==================================================");
+                if (!Directory.Exists(CARPETA_TEMP)) Directory.CreateDirectory(CARPETA_TEMP);
+                if (!Directory.Exists(RUTA_BASE_SALIDA)) Directory.CreateDirectory(RUTA_BASE_SALIDA);
 
+                Log(" [|] TEMP: " + CARPETA_TEMP);
+                Log(" [F2] DATA: " + RUTA_BASE_SALIDA);
+                Log("------------------------------------------------------------");
+
+                while (true)
+                {
+                    if (Directory.Exists(CARPETA_TEMP))
+                    {
+                        string[] colaArchivos = Directory.GetFiles(CARPETA_TEMP, "*.bin");
+
+                        foreach (string filePath in colaArchivos)
+                        {
+                            if (EstaBloqueado(filePath)) continue;
+
+                            ProcesarArchivo(filePath);
+                        }
+                    }
+                    Thread.Sleep(500); // Pausa de escucha
+                }
+            }
+        }
+
+        private static bool EstaBloqueado(string path)
+        {
+            try
+            {
+                using (FileStream stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.None)) return false;
+            }
+            catch { return true; }
+        }
+
+        private static void ProcesarArchivo(string filePath)
+        {
+            Log($"\n==================================================");
+            Log($"Procesando: {Path.GetFileName(filePath)}");
+            Log($"==================================================");
+
+            try
+            {
                 var swFile = Stopwatch.StartNew();
                 var stats = new PipelineStats();
 
-                Console.WriteLine($"Leyendo archivo: {filePath}");
+                Log($"Leyendo archivo: {filePath}");
                 List<MeshData> meshes = LeerBinario(filePath, stats);
-                Console.WriteLine($"Formato v{stats.FormatVersion}{(stats.FormatVersion >= 2 ? " (con color de material)" : " (legado, colores aleatorios)")}. Se leyeron {meshes.Count} mallas.");
+                Log($"Formato v{stats.FormatVersion}{(stats.FormatVersion >= 2 ? " (con color de material)" : " (legado, colores aleatorios)")}. Se leyeron {meshes.Count} mallas.");
 
                 Console.WriteLine("Agrupando, soldando y diezmando (QEM) geometría...");
                 var weldedOriginals = new Dictionary<string, MeshData>();
@@ -165,32 +197,45 @@ namespace ConvertidorGeometrias
                 stats.TrisOut = optimizedMeshes.Sum(m => (long)m.Indices.Count / 3);
                 stats.OutputPieces = optimizedMeshes.Count;
 
-                string inputDir = Path.GetDirectoryName(filePath);
-                string directory = Path.GetFullPath(Path.Combine(inputDir, "..", "OUT"));
-                if (!Directory.Exists(directory)) Directory.CreateDirectory(directory);
-                string baseName = Path.GetFileNameWithoutExtension(filePath);
+                string baseName = Path.GetFileNameWithoutExtension(filePath).Replace("_Geometria", "");
 
-                string objPath = Path.Combine(directory, baseName + ".obj");
-                string glbPath = Path.Combine(directory, baseName + "_optimizado.glb");
+                string tbvPath = Path.Combine(RUTA_BASE_SALIDA, baseName + "_Geometria.tbv");
 
-                string tbvPath = Path.Combine(directory, baseName + ".tbv");
                 Console.WriteLine($"Exportando binario de visor (dedup + índice espacial): {tbvPath}");
                 ExportToViewerBin(optimizedMeshes, tbvPath, stats);
 
-                string reportPath = Path.Combine(directory, baseName + "_reporte.txt");
+                string reportPath = Path.Combine(RUTA_BASE_SALIDA, baseName + "_Geometria_reporte.txt");
 
                 swFile.Stop();
-                string reporte = ConstruirReporte(stats, rotasDetectadas, rotasFinales, swFile.Elapsed, objPath, glbPath);
-                Console.WriteLine(reporte);
+                string reporte = ConstruirReporte(stats, rotasDetectadas, rotasFinales, swFile.Elapsed);
+                Log(reporte);
                 File.WriteAllText(reportPath, reporte);
-                Console.WriteLine($"Reporte guardado en: {reportPath}");
-            }
+                Log($"Reporte guardado en: {reportPath}");
 
-            Console.WriteLine("\n¡Todos los procesos terminaron!");
-            if (pause) Console.ReadLine();
+                if (File.Exists(filePath)) File.Delete(filePath);
+            }
+            catch (Exception ex)
+            {
+                Log("\n !!! FALLA: " + ex.Message + "\n" + ex.StackTrace);
+                if (File.Exists(filePath)) File.Delete(filePath);
+            }
         }
 
-        static string ConstruirReporte(PipelineStats s, List<PiezaRota> detectadas, List<PiezaRota> rotas, TimeSpan elapsed, string objPath, string glbPath)
+        private static void Log(string msg)
+        {
+            Console.WriteLine(msg);
+            try
+            {
+                if (!string.IsNullOrEmpty(RUTA_LOG))
+                {
+                    string timestamp = DateTime.Now.ToString("HH:mm:ss");
+                    File.AppendAllText(RUTA_LOG, $"[{timestamp}] {msg}\n");
+                }
+            }
+            catch { }
+        }
+
+        static string ConstruirReporte(PipelineStats s, List<PiezaRota> detectadas, List<PiezaRota> rotas, TimeSpan elapsed)
         {
             var sb = new StringBuilder();
             sb.AppendLine();
@@ -210,9 +255,7 @@ namespace ConvertidorGeometrias
             sb.AppendLine($"Piezas instanciadas (malla compartida): {s.Instanced}");
             sb.AppendLine($"Geometrías únicas en el .tbv (dedup): {s.PoolMeshes} de {s.OutputPieces} piezas");
             if (s.TbvBytes > 0) sb.AppendLine($"Binario de visor (.tbv): {s.TbvBytes / 1024:N0} KB");
-            string objSize = File.Exists(objPath) ? $"{new FileInfo(objPath).Length / 1024:N0} KB" : "No exportado";
-            string glbSize = File.Exists(glbPath) ? $"{new FileInfo(glbPath).Length / 1024:N0} KB" : "No exportado";
-            sb.AppendLine($"OBJ: {objSize}   GLB: {glbSize}");
+
             sb.AppendLine($"Tiempo total: {elapsed.TotalSeconds:F1} s");
             sb.AppendLine("====================================");
             sb.AppendLine();
