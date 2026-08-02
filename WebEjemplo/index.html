@@ -2239,10 +2239,51 @@
     // The scene is merged per (material, category), so filtering is just a
     // visibility flag per merged mesh: zero geometry work, zero extra RAM.
     // ==================================================================
+    // Cubre las categorías que exporta el addin. Sin una entrada acá, el filtro muestra
+    // "Categoría -2001040" en vez de un nombre legible.
     const CATEGORY_NAMES = {
+        // Arquitectura
         '-2000011': 'Muros', '-2000032': 'Suelos', '-2000035': 'Techos',
-        '-2000023': 'Puertas', '-2000014': 'Ventanas', '-2001330': 'Columnas',
-        '-2001320': 'Vigas', '-2000080': 'Mobiliario', '-2001160': 'Sanitarios'
+        '-2000038': 'Cielorrasos', '-2000023': 'Puertas', '-2000014': 'Ventanas',
+        '-2000170': 'Paneles de muro cortina', '-2000171': 'Montantes de muro cortina',
+        '-2000120': 'Escaleras', '-2000126': 'Barandas', '-2000180': 'Rampas',
+        '-2000100': 'Columnas', '-2000080': 'Mobiliario', '-2001000': 'Mobiliario de obra',
+        '-2000151': 'Modelos genéricos', '-2001350': 'Equipamiento especial',
+        '-2001180': 'Estacionamiento', '-2001360': 'Vegetación', '-2001260': 'Emplazamiento',
+        '-2001340': 'Topografía', '-2001370': 'Entorno', '-2003400': 'Masas',
+        '-2000269': 'Piezas',
+        '-2000181': 'Barridos de muro', '-2001390': 'Alero', '-2001391': 'Canaleta',
+        '-2001392': 'Borde de losa',
+
+        // Estructura
+        '-2001330': 'Columnas estructurales', '-2001320': 'Estructura (vigas)',
+        '-2001300': 'Cimentación', '-2009030': 'Conexiones estructurales',
+        '-2001336': 'Cerchas', '-2009000': 'Armaduras',
+
+        // MEP — Fontanería
+        '-2001160': 'Sanitarios', '-2008044': 'Tuberías', '-2008049': 'Uniones de tubería',
+        '-2008055': 'Accesorios de tubería', '-2008050': 'Tuberías flexibles',
+        '-2008122': 'Aislamiento de tubería', '-2008099': 'Rociadores',
+
+        // MEP — HVAC
+        '-2008000': 'Conductos', '-2008010': 'Uniones de conducto',
+        '-2008016': 'Accesorios de conducto', '-2008013': 'Terminales de aire',
+        '-2008020': 'Conductos flexibles', '-2008123': 'Aislamiento de conducto',
+        '-2008124': 'Forro de conducto', '-2001140': 'Equipamiento mecánico',
+
+        // MEP — Eléctrico
+        '-2001040': 'Equipamiento eléctrico', '-2001060': 'Aparatos eléctricos',
+        '-2001120': 'Luminarias',
+        '-2008130': 'Bandejas de cable', '-2008126': 'Uniones de bandeja',
+        '-2008132': 'Tubos (conduit)', '-2008128': 'Uniones de conduit',
+
+        // MEP — Dispositivos
+        '-2008081': 'Dispositivos de comunicación', '-2008083': 'Dispositivos de datos',
+        '-2008085': 'Dispositivos de alarma', '-2008079': 'Dispositivos de seguridad',
+        '-2008077': 'Llamada a enfermería', '-2008075': 'Dispositivos telefónicos',
+
+        // Espaciales
+        '-2000160': 'Habitaciones'
     };
     const catName = (id) => CATEGORY_NAMES[String(id)] || ('Categoría ' + id);
 

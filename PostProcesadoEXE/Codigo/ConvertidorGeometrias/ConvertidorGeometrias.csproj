@@ -25,4 +25,16 @@
     <Delete Files="@(FilesToDelete)" />
   </Target>
 
+  <Target Name="InstallToMIP" AfterTargets="Build">
+    <PropertyGroup>
+      <MIPFolder>C:\ProgramData\Autodesk\Revit\Addins\2021\MIP</MIPFolder>
+    </PropertyGroup>
+    <MakeDir Directories="$(MIPFolder)\Executables\Geometria" Condition="!Exists('$(MIPFolder)\Executables\Geometria')" />
+    <Copy SourceFiles="$(OutputPath)OptimizarDumpDeRevit.exe" DestinationFolder="$(MIPFolder)\Executables\Geometria" SkipUnchangedFiles="true" />
+    <!-- Copies config.json if it does not already exist to prevent overwriting user modifications -->
+    <Copy SourceFiles="config.json" DestinationFolder="$(MIPFolder)" Condition="!Exists('$(MIPFolder)\config.json')" />
+    <!-- Always copy the batch script -->
+    <Copy SourceFiles="copiar_resultados.bat" DestinationFolder="$(MIPFolder)" SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

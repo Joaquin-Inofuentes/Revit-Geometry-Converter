@@ -1,0 +1,36 @@
+{
+  "Paths": {
+    "TempFolderPath": "C:\\ProgramData\\Autodesk\\Revit\\Addins\\2021\\MIP\\Temp",
+    "BasePluginFolder": "C:\\ProgramData\\Autodesk\\Revit\\Addins\\2021\\MIP",
+    "BaseExportFolder": "C:\\NO ENTRAR\\JPG",
+    "DataFolder": "C:\\NO ENTRAR\\JPG\\DATA",
+    "ExeParametros": "C:\\ProgramData\\Autodesk\\Revit\\Addins\\2021\\MIP\\Executables\\Parametros\\R_P_Parametros.exe",
+    "ExeParametrosCalculo": "C:\\ProgramData\\Autodesk\\Revit\\Addins\\2021\\MIP\\Executables\\Parametros\\R_P_Parametros.exe",
+    "ExePosiciones": "C:\\ProgramData\\Autodesk\\Revit\\Addins\\2021\\MIP\\Executables\\Posiciones\\R_P_Posiciones.exe",
+    "ExeTablas": "C:\\ProgramData\\Autodesk\\Revit\\Addins\\2021\\MIP\\Executables\\Tablas\\R_P_Tablas.exe",
+    "ExePostProceso": "C:\\ProgramData\\Autodesk\\Revit\\Addins\\2021\\MIP\\Executables\\Planos\\_Revit_EXE_Planos.exe",
+    "ExeGeometria": "C:\\ProgramData\\Autodesk\\Revit\\Addins\\2021\\MIP\\Executables\\Geometria\\OptimizarDumpDeRevit.exe"
+  },
+  "Exports": {
+    "ExportarPlanos": true,
+    "ExportarPuntos": true,
+    "ExportarParametros": true,
+    "ExportarTablas": true,
+    "ExportarMashas": true,
+    "ExportarGeometria": true,
+    "MainImageScale": 1.0,
+    "ImageRenderDpi": 150
+  },
+  "System": {
+    "OmitirLosYaExportados": false,
+    "MaxFailureRetries": 3,
+    "LogRotationDays": 30,
+    "WatchdogTimeoutMinutes": 20,
+    "Debug_MaxSheetsToProcess": 0,
+    "MaxSheetSizeMeters": 2.0,
+    "FailuresToIgnore": [
+      "BuiltInFailures.DimensionFailures.InvalidDimensionReference",
+      "BuiltInFailures.DimensionFailures.DimensionReferencesAreNotParallel"
+    ]
+  }
+}

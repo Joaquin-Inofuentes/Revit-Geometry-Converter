@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -18,6 +18,14 @@ namespace ConvertidorGeometrias
         public int ElementId;
         public string Guid;
         public int MaterialId;
+
+        /// <summary>
+        /// Clave de pieza para agrupar y validar: GUID + material.
+        /// Agrupar sólo por GUID fundía todas las caras del elemento en una malla y se quedaba
+        /// con el material/color de la primera: una puerta madera+vidrio salía toda de madera,
+        /// y el alpha del vidrio se perdía, desactivando la protección anti-decimado.
+        /// </summary>
+        public string PieceKey { get { return Guid + "|" + MaterialId; } }
         // Id de BuiltInCategory de Revit (formato v3); 0 si no vino en el archivo.
         public int CategoryId;
         // Color superficial simple del material de Revit (formato v2+). Alpha < 255 = vidrio/transparente.
@@ -26,11 +34,20 @@ namespace ConvertidorGeometrias
         public List<Vector3> Vertices = new List<Vector3>();
         public List<Vector3> Normals = new List<Vector3>();
         public List<int> Indices = new List<int>();
+
+        // v4: Metadata de habitaciones (solo si CategoryId == -2000160 / OST_Rooms)
+        public string RoomLevel = "";
+        public string RoomDepartment = "";
+        public string RoomName = "";
     }
 
     public class PipelineStats
     {
         public int FormatVersion = 1;
+        public string UnidadOrigen = "";
+        public Vector3 PuntoBase;
+        public int Rooms;          // habitaciones con centroide válido en el JSON
+        public int RoomsSinCentro; // habitaciones que llegaron sin posición
         public int InputMeshes;
         public int OutputPieces;
         public long VertsIn, VertsWelded, VertsOut;
@@ -50,6 +67,9 @@ namespace ConvertidorGeometrias
 
     public class PiezaRota
     {
+        /// <summary>Clave de agrupación (GUID|MaterialId), para localizar la pieza.</summary>
+        public string Clave;
+        /// <summary>GUID de Revit, para mostrar en el reporte.</summary>
         public string Guid;
         public int ElementId;
         public string Problema;
@@ -60,6 +80,12 @@ namespace ConvertidorGeometrias
     {
         // "TBT2" en little-endian: cabecera del formato v2 (con color de material)
         const int FormatMagic = 0x32544254;
+
+        // Conversión para archivos <= v4, que traían las coordenadas en pies de Revit.
+        const double PiesAMetros = 0.3048;
+
+        // Id de BuiltInCategory de las habitaciones (OST_Rooms).
+        const int CatRooms = -2000160;
 
         // Tolerancia de soldadura: grilla de 1 mm
         const double WeldGrid = 1000.0;
@@ -82,6 +108,7 @@ namespace ConvertidorGeometrias
             -2000032, // OST_Floors  (Suelos)
             -2000035, // OST_Roofs   (Techos)
             -2000014, // OST_Windows (Ventanas: el decimado rompe los paños)
+            CatRooms, // OST_Rooms   (Habitaciones — geometría plana, no decimar)
         };
 
         // El decimado destroza los paños de vidrio (mallas casi planas y finas).
@@ -96,7 +123,7 @@ namespace ConvertidorGeometrias
         }
 
         private const string APP_GUID = "Global\\RevitGeometriaWatcher_JPG_2024";
-        private static readonly string CARPETA_TEMP = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp_R_BIN_Geometrias");
+        private static string CARPETA_TEMP = @"C:\ProgramData\Autodesk\Revit\Addins\2021\MIP\Temp";
         private static string RUTA_BASE_SALIDA = @"C:\NO ENTRAR\JPG\DATA";
         private static string RUTA_LOG = "";
 
@@ -199,6 +226,12 @@ namespace ConvertidorGeometrias
 
                 string baseName = Path.GetFileNameWithoutExtension(filePath).Replace("_Geometria", "");
 
+                // Las habitaciones se exportan PRIMERO: son un JSON chico e independiente, y si
+                // el escritor del .tbv falla no tiene por qué llevárselas puestas.
+                string roomsPath = Path.Combine(RUTA_BASE_SALIDA, baseName + "_Geometria_Habitaciones.json");
+                Console.WriteLine($"Exportando data de habitaciones: {roomsPath}");
+                ExportRoomsJson(optimizedMeshes, roomsPath, stats);
+
                 string tbvPath = Path.Combine(RUTA_BASE_SALIDA, baseName + "_Geometria.tbv");
 
                 Console.WriteLine($"Exportando binario de visor (dedup + índice espacial): {tbvPath}");
@@ -217,7 +250,36 @@ namespace ConvertidorGeometrias
             catch (Exception ex)
             {
                 Log("\n !!! FALLA: " + ex.Message + "\n" + ex.StackTrace);
-                if (File.Exists(filePath)) File.Delete(filePath);
+
+                // El .bin es irreproducible sin volver a exportar desde Revit: en vez de
+                // borrarlo se aparta, para poder diagnosticar y reprocesar.
+                ApartarFallido(filePath);
+            }
+        }
+
+        // Mueve un .bin que no se pudo procesar a "_Fallidos" junto al TEMP, para que el
+        // watcher no lo reintente en bucle pero tampoco se pierda.
+        private static void ApartarFallido(string filePath)
+        {
+            try
+            {
+                if (!File.Exists(filePath)) return;
+
+                string carpeta = Path.Combine(CARPETA_TEMP, "_Fallidos");
+                Directory.CreateDirectory(carpeta);
+
+                string destino = Path.Combine(
+                    carpeta,
+                    $"{Path.GetFileNameWithoutExtension(filePath)}_{DateTime.Now:yyyyMMdd_HHmmss}.bin");
+
+                File.Move(filePath, destino);
+                Log($"Archivo apartado para diagnóstico: {destino}");
+            }
+            catch (Exception ex)
+            {
+                Log("No se pudo apartar el archivo fallido: " + ex.Message);
+                // Último recurso: borrarlo, o el watcher entra en bucle infinito sobre él.
+                try { if (File.Exists(filePath)) File.Delete(filePath); } catch { }
             }
         }
 
@@ -240,8 +302,11 @@ namespace ConvertidorGeometrias
             var sb = new StringBuilder();
             sb.AppendLine();
             sb.AppendLine("=========== ESTADÍSTICAS ===========");
-            sb.AppendLine($"Formato de entrada:     v{s.FormatVersion}");
+            sb.AppendLine($"Formato de entrada:     v{s.FormatVersion} ({s.UnidadOrigen})");
+            sb.AppendLine($"Punto Base (m):         ({s.PuntoBase.X:F3}, {s.PuntoBase.Y:F3}, {s.PuntoBase.Z:F3})");
             sb.AppendLine($"Mallas de entrada:      {s.InputMeshes}");
+            sb.AppendLine($"Habitaciones exportadas: {s.Rooms}" +
+                          (s.RoomsSinCentro > 0 ? $"  (¡{s.RoomsSinCentro} sin centroide, omitidas!)" : ""));
             sb.AppendLine($"Piezas de salida:       {s.OutputPieces} (descartadas vacías: {s.Discarded})");
             sb.AppendLine($"Vértices:  {s.VertsIn:N0} -> soldados {s.VertsWelded:N0} -> finales {s.VertsOut:N0}  ({Pct(s.VertsOut, s.VertsIn)})");
             sb.AppendLine($"Triángulos: {s.TrisIn:N0} -> finales {s.TrisOut:N0}  ({Pct(s.TrisOut, s.TrisIn)})");
@@ -298,18 +363,19 @@ namespace ConvertidorGeometrias
         static List<PiezaRota> ValidarPiezas(Dictionary<string, MeshData> originales, List<MeshData> finales)
         {
             var rotas = new List<PiezaRota>();
-            var finalesPorGuid = finales.ToDictionary(m => m.Guid);
+            var finalesPorClave = finales.ToDictionary(m => m.PieceKey);
 
             foreach (var kv in originales)
             {
                 var orig = kv.Value;
                 if (orig.Indices.Count < 3) continue; // no había geometría útil de entrada
 
-                if (!finalesPorGuid.TryGetValue(kv.Key, out var fin))
+                if (!finalesPorClave.TryGetValue(kv.Key, out var fin))
                 {
                     rotas.Add(new PiezaRota
                     {
-                        Guid = kv.Key,
+                        Clave = kv.Key,
+                        Guid = orig.Guid,
                         ElementId = orig.ElementId,
                         Problema = "PIEZA PERDIDA: existía en la entrada y no está en la salida",
                         Detalle = $"original: {orig.Vertices.Count} verts, {orig.Indices.Count / 3} tris, bbox {BBoxStr(orig.Vertices)}"
@@ -332,7 +398,8 @@ namespace ConvertidorGeometrias
                 {
                     rotas.Add(new PiezaRota
                     {
-                        Guid = kv.Key,
+                        Clave = kv.Key,
+                        Guid = orig.Guid,
                         ElementId = fin.ElementId,
                         Problema = "VÉRTICES NaN/INFINITY",
                         Detalle = string.Join("; ", nanVerts)
@@ -360,7 +427,8 @@ namespace ConvertidorGeometrias
                 {
                     rotas.Add(new PiezaRota
                     {
-                        Guid = kv.Key,
+                        Clave = kv.Key,
+                        Guid = orig.Guid,
                         ElementId = fin.ElementId,
                         Problema = "SPIKE: vértices fuera del volumen original",
                         Detalle = $"bbox original {BBoxStr(orig.Vertices)}; vértices fuera: {string.Join("; ", spikes)}"
@@ -374,7 +442,8 @@ namespace ConvertidorGeometrias
                 {
                     rotas.Add(new PiezaRota
                     {
-                        Guid = kv.Key,
+                        Clave = kv.Key,
+                        Guid = orig.Guid,
                         ElementId = fin.ElementId,
                         Problema = "COLAPSO: la pieza se encogió más del 50%",
                         Detalle = $"bbox original {BBoxStr(orig.Vertices)} (diag {diag:F3}) -> final {BBoxStr(fin.Vertices)} (diag {finDiag:F3})"
@@ -389,7 +458,8 @@ namespace ConvertidorGeometrias
                 {
                     rotas.Add(new PiezaRota
                     {
-                        Guid = kv.Key,
+                        Clave = kv.Key,
+                        Guid = orig.Guid,
                         ElementId = fin.ElementId,
                         Problema = "ÁREA ANÓMALA: superficie cambió más de ±40% (agujeros o colapso)",
                         Detalle = $"área original {aOrig:F4} -> final {aFin:F4} (ratio {aFin / aOrig:F2})"
@@ -408,11 +478,12 @@ namespace ConvertidorGeometrias
         {
             foreach (var rota in rotas)
             {
-                if (!originales.TryGetValue(rota.Guid, out var orig) || orig.Indices.Count < 3) continue;
+                if (!originales.TryGetValue(rota.Clave, out var orig)) continue;
+                if (orig.Indices.Count < 3 && orig.CategoryId != CatRooms) continue;
 
                 var reparada = ClonarConNormales(orig);
 
-                int idx = finales.FindIndex(m => m.Guid == rota.Guid);
+                int idx = finales.FindIndex(m => m.PieceKey == rota.Clave);
                 if (idx >= 0) finales[idx] = reparada;
                 else finales.Add(reparada);
 
@@ -431,6 +502,9 @@ namespace ConvertidorGeometrias
                 CategoryId = src.CategoryId,
                 ColR = src.ColR, ColG = src.ColG, ColB = src.ColB, ColA = src.ColA,
                 HasColor = src.HasColor,
+                RoomLevel = src.RoomLevel,
+                RoomDepartment = src.RoomDepartment,
+                RoomName = src.RoomName,
                 Vertices = new List<Vector3>(src.Vertices),
                 Indices = new List<int>(src.Indices)
             };
@@ -450,7 +524,9 @@ namespace ConvertidorGeometrias
                                              Dictionary<string, MeshData> weldedOriginals)
         {
             stats.InputMeshes = inputMeshes.Count;
-            var grouped = inputMeshes.GroupBy(m => m.Guid);
+            // Agrupado por (GUID, MaterialId): un elemento con varios materiales produce una
+            // pieza por material, cada una con su color y su protección de vidrio correctas.
+            var grouped = inputMeshes.GroupBy(m => m.PieceKey);
             var optimizedList = new List<MeshData>();
 
             foreach (var group in grouped)
@@ -458,12 +534,17 @@ namespace ConvertidorGeometrias
                 var first = group.First();
                 var mergedMesh = new MeshData
                 {
-                    Guid = group.Key,
+                    Guid = first.Guid,
                     ElementId = first.ElementId,
                     MaterialId = first.MaterialId,
                     CategoryId = first.CategoryId,
                     ColR = first.ColR, ColG = first.ColG, ColB = first.ColB, ColA = first.ColA,
-                    HasColor = first.HasColor
+                    HasColor = first.HasColor,
+                    // Sin esto la metadata de habitación se pierde acá y el JSON sale con
+                    // Level/Department/Name vacíos (el visor descarta las que no tienen Level).
+                    RoomLevel = first.RoomLevel,
+                    RoomDepartment = first.RoomDepartment,
+                    RoomName = first.RoomName
                 };
 
                 int vertexOffset = 0;
@@ -491,7 +572,7 @@ namespace ConvertidorGeometrias
 
                 weldedOriginals[group.Key] = mergedMesh;
 
-                if (mergedMesh.Indices.Count < 3)
+                if (mergedMesh.Indices.Count < 3 && mergedMesh.CategoryId != CatRooms)
                 {
                     stats.Discarded++;
                     continue;
@@ -541,7 +622,7 @@ namespace ConvertidorGeometrias
                     stats.NotDecimated++;
                 }
 
-                if (outMesh.Indices.Count < 3)
+                if (outMesh.Indices.Count < 3 && outMesh.CategoryId != CatRooms)
                 {
                     stats.Discarded++;
                     continue;
@@ -682,6 +763,11 @@ namespace ConvertidorGeometrias
 
         static void WeldVertices(MeshData mesh)
         {
+            // Una pieza sin triángulos (habitaciones: 1 vértice = centroide, 0 caras) no tiene
+            // nada que soldar. Sin este corte, el bucle de abajo — que recorre los ÍNDICES —
+            // no itera nunca y deja mesh.Vertices vacío, destruyendo el centroide.
+            if (mesh.Indices.Count == 0) return;
+
             var uniqueVertices = new List<Vector3>();
             // Clave por grilla de 1 mm con enteros (sin strings: más rápido y sin errores de formato)
             var vertexMap = new Dictionary<(long, long, long), int>(mesh.Vertices.Count);
@@ -739,6 +825,10 @@ namespace ConvertidorGeometrias
         // Quita vértices que ningún triángulo referencia y reindexa.
         static void CompactVertices(MeshData mesh)
         {
+            // Mismo motivo que en WeldVertices: sin índices, compactar borraría los vértices
+            // que no referencia ningún triángulo — es decir, todos.
+            if (mesh.Indices.Count == 0) return;
+
             var remap = new int[mesh.Vertices.Count];
             for (int i = 0; i < remap.Length; i++) remap[i] = -1;
 
@@ -787,6 +877,8 @@ namespace ConvertidorGeometrias
         // v1 (legado): [elementId][guid][materialId][verts][tris]...
         // v2 ("TBT2"): cabecera [magic][version]; cada bloque agrega color RGBA del material.
         // v3: además agrega el id de BuiltInCategory (int32) después del MaterialId.
+        // v4: cabecera con el Punto Base del Proyecto + metadata de habitaciones.
+        // v5: las coordenadas vienen en METROS (v4 y anteriores venían en pies).
         static List<MeshData> LeerBinario(string path, PipelineStats stats)
         {
             var meshes = new List<MeshData>();
@@ -794,7 +886,7 @@ namespace ConvertidorGeometrias
             using (var fs = File.OpenRead(path))
             using (var reader = new BinaryReader(fs))
             {
-                bool v2 = false, v3 = false;
+                bool v2 = false, v3 = false, v4 = false, v5 = false;
                 if (fs.Length >= 8)
                 {
                     int magic = reader.ReadInt32();
@@ -803,6 +895,8 @@ namespace ConvertidorGeometrias
                         int version = reader.ReadInt32();
                         v2 = version >= 2;
                         v3 = version >= 3;
+                        v4 = version >= 4;
+                        v5 = version >= 5;
                         stats.FormatVersion = version;
                     }
                     else
@@ -810,6 +904,21 @@ namespace ConvertidorGeometrias
                         fs.Position = 0; // formato legado sin cabecera
                     }
                 }
+
+                // Todo el ecosistema trabaja en metros. Los formatos <= v4 escribían pies, así
+                // que se convierten al leer y de acá para abajo el pipeline es siempre métrico.
+                float aMetros = v5 ? 1f : (float)PiesAMetros;
+                stats.UnidadOrigen = v5 ? "metros (v5)" : "pies -> convertido a metros";
+
+                // v4: Leer Punto Base del Proyecto (3 floats, solo para referencia)
+                float baseX = 0, baseY = 0, baseZ = 0;
+                if (v4)
+                {
+                    baseX = reader.ReadSingle() * aMetros;
+                    baseY = reader.ReadSingle() * aMetros;
+                    baseZ = reader.ReadSingle() * aMetros;
+                }
+                stats.PuntoBase = new Vector3(baseX, baseY, baseZ);
 
                 while (fs.Position < fs.Length)
                 {
@@ -836,9 +945,9 @@ namespace ConvertidorGeometrias
                     mesh.Vertices.Capacity = vertexCount;
                     for (int i = 0; i < vertexCount; i++)
                     {
-                        float x = reader.ReadSingle();
-                        float y = reader.ReadSingle();
-                        float z = reader.ReadSingle();
+                        float x = reader.ReadSingle() * aMetros;
+                        float y = reader.ReadSingle() * aMetros;
+                        float z = reader.ReadSingle() * aMetros;
 
                         // Rotar de Revit (Z-Up) a estándar GLTF/Visualizadores (Y-Up)
                         mesh.Vertices.Add(new Vector3(x, z, -y));
@@ -853,11 +962,67 @@ namespace ConvertidorGeometrias
                         mesh.Indices.Add((int)reader.ReadUInt32());
                     }
 
+                    // v4: Metadata de habitaciones
+                    if (v4 && mesh.CategoryId == CatRooms)
+                    {
+                        mesh.RoomLevel = reader.ReadString();
+                        mesh.RoomDepartment = reader.ReadString();
+                        mesh.RoomName = reader.ReadString();
+                    }
+
                     meshes.Add(mesh);
                 }
             }
 
             return meshes;
+        }
+
+        static void ExportRoomsJson(List<MeshData> meshes, string outputPath, PipelineStats stats)
+        {
+            var rooms = new List<object>();
+
+            foreach (var m in meshes)
+            {
+                if (m.CategoryId != CatRooms) continue;
+
+                if (m.Vertices.Count == 0)
+                {
+                    // Antes esto era el caso NORMAL (el soldado borraba el centroide) y salía
+                    // como [0,0,0] silencioso. Ahora es una anomalía real y se reporta.
+                    stats.RoomsSinCentro++;
+                    Console.WriteLine($"  AVISO: habitación ElementId {m.ElementId} " +
+                                      $"('{m.RoomName}') llegó sin centroide; se omite del JSON.");
+                    continue;
+                }
+
+                var c = m.Vertices[0];
+                rooms.Add(new
+                {
+                    ElementId = m.ElementId,
+                    Guid = m.Guid,
+                    Level = m.RoomLevel,
+                    Department = m.RoomDepartment,
+                    Name = m.RoomName,
+                    Center = new[] { c.X, c.Y, c.Z }
+                });
+                stats.Rooms++;
+            }
+
+            // Envoltura con metadata: sin esto, el consumidor no puede saber en qué unidades ni
+            // en qué sistema de ejes están los centros (el pipeline rota Z-Up -> Y-Up).
+            var payload = new
+            {
+                Units = "meters",
+                AxisSystem = "Y-Up (X, Z, -Y respecto de Revit)",
+                Origin = "Punto Base del Proyecto",
+                ProjectBasePoint = new[] { stats.PuntoBase.X, stats.PuntoBase.Y, stats.PuntoBase.Z },
+                Count = rooms.Count,
+                Rooms = rooms
+            };
+
+            var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+            string json = System.Text.Json.JsonSerializer.Serialize(payload, options);
+            File.WriteAllText(outputPath, json);
         }
 
         // ================== EXPORTACIÓN ==================
@@ -935,6 +1100,8 @@ namespace ConvertidorGeometrias
 
             foreach (var meshData in meshes)
             {
+                if (meshData.Vertices == null || meshData.Vertices.Count == 0) continue;
+
                 if (!materials.TryGetValue(meshData.MaterialId, out var material))
                 {
                     float r, g, b, a;
@@ -1043,6 +1210,7 @@ namespace ConvertidorGeometrias
         // Hash rápido de la forma: posiciones relativas al primer vértice (grilla 0,05 mm) + índices.
         static long GeometryHash(MeshData mesh)
         {
+            if (mesh.Vertices == null || mesh.Vertices.Count == 0) return 0;
             const double q = 20000.0;
             var v0 = mesh.Vertices[0];
             long hash = 1469598103934665603; // FNV-1a
@@ -1067,6 +1235,7 @@ namespace ConvertidorGeometrias
         static bool EsCopiaTrasladada(MeshData a, MeshData b, out Vector3 delta)
         {
             delta = default;
+            if (a.Vertices == null || a.Vertices.Count == 0 || b.Vertices == null || b.Vertices.Count == 0) return false;
             if (a.Vertices.Count != b.Vertices.Count || a.Indices.Count != b.Indices.Count) return false;
 
             for (int i = 0; i < a.Indices.Count; i++)
@@ -1114,10 +1283,14 @@ namespace ConvertidorGeometrias
             const int VERSION = 1;
 
             // Tabla de materiales: un color por MaterialId
+            // Sólo las piezas con geometría real: si no, las habitaciones (MaterialId -1) meten
+            // un material fantasma de color (0,0,0,0) que nunca referencia ninguna instancia.
             var matIndexById = new Dictionary<int, int>();
             var matReps = new List<MeshData>();
             foreach (var m in meshes)
             {
+                if (m.Vertices == null || m.Vertices.Count == 0 || m.Indices.Count < 3) continue;
+
                 if (!matIndexById.ContainsKey(m.MaterialId))
                 {
                     matIndexById[m.MaterialId] = matReps.Count;
@@ -1132,8 +1305,16 @@ namespace ConvertidorGeometrias
             var instMeshIdx = new List<int>(meshes.Count);
             var instDelta = new List<Vector3>(meshes.Count);
 
+            // Lista paralela a instMeshIdx/instDelta. Las piezas sin geometría (habitaciones:
+            // centroide puro, sin caras) NO van al .tbv, pero antes se salteaban acá y los
+            // bucles de abajo seguían recorriendo `meshes` entero: los índices se desfasaban y
+            // reventaba con IndexOutOfRangeException en cuanto el modelo tenía una habitación.
+            var instSource = new List<MeshData>(meshes.Count);
+
             foreach (var m in meshes)
             {
+                if (m.Vertices == null || m.Vertices.Count == 0 || m.Indices.Count < 3) continue;
+
                 var key = (m.MaterialId, m.Vertices.Count, m.Indices.Count, GeometryHash(m));
                 if (!poolKey.TryGetValue(key, out var cand))
                 {
@@ -1160,18 +1341,27 @@ namespace ConvertidorGeometrias
 
                 instMeshIdx.Add(found);
                 instDelta.Add(delta);
+                instSource.Add(m);
             }
 
             stats.PoolMeshes = pool.Count;
 
             // AABB de toda la escena (para encuadre inicial del visor)
             Vector3 sMin = new Vector3(float.MaxValue), sMax = new Vector3(float.MinValue);
-            for (int i = 0; i < meshes.Count; i++)
+            for (int i = 0; i < instSource.Count; i++)
             {
                 var (mn, mx) = poolBounds[instMeshIdx[i]];
                 var d = instDelta[i];
                 sMin = Vector3.Min(sMin, mn + d);
                 sMax = Vector3.Max(sMax, mx + d);
+            }
+
+            // Sin ninguna instancia con geometría, el AABB queda invertido (MaxValue/MinValue)
+            // y el visor no puede encuadrar. Mejor una caja degenerada en el origen.
+            if (instSource.Count == 0)
+            {
+                sMin = Vector3.Zero;
+                sMax = Vector3.Zero;
             }
 
             var rndColors = new Random(42);
@@ -1182,7 +1372,7 @@ namespace ConvertidorGeometrias
                 w.Write(VERSION);
                 w.Write(matReps.Count);
                 w.Write(pool.Count);
-                w.Write(meshes.Count);
+                w.Write(instSource.Count);
                 w.Write(sMin.X); w.Write(sMin.Y); w.Write(sMin.Z);
                 w.Write(sMax.X); w.Write(sMax.Y); w.Write(sMax.Z);
 
@@ -1231,9 +1421,9 @@ namespace ConvertidorGeometrias
                 }
 
                 // Instancias
-                for (int i = 0; i < meshes.Count; i++)
+                for (int i = 0; i < instSource.Count; i++)
                 {
-                    var m = meshes[i];
+                    var m = instSource[i];
                     var (mn, mx) = poolBounds[instMeshIdx[i]];
                     var d = instDelta[i];
                     var gmin = mn + d;
