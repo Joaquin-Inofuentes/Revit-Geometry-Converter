@@ -1265,9 +1265,18 @@ namespace ConvertidorGeometrias
         //   - Compacto: normales en int8 (snorm), índices uint16 cuando se puede.
         //
         // Layout (little-endian):
-        //   Header: int32 magic('TBTV'=0x56544254), int32 version(1),
+        //   Header: int32 magic('TBTV'=0x56544254), int32 version(2),
+        //           float32 unitsPerMeter,
         //           int32 matCount, int32 meshCount, int32 instCount,
         //           float32 sceneMin[3], float32 sceneMax[3]
+        //
+        // v2 (2026-08): agrega unitsPerMeter — el visor ya no puede asumir la
+        // escala (había .tbv en pies y en metros conviviendo en la misma
+        // carpeta de Drive con el mismo magic/version=1, indistinguibles para
+        // el cliente; ver DIAGNOSTICO_VISOR3D.md §3.3). Acá SIEMPRE se escribe
+        // 1.0 porque LeerBinario ya convirtió todo a metros al leer el
+        // export.bin (ver aMetros más arriba); un lector v1 (sin este campo)
+        // debe asumir pies, como venía siendo.
         //   Materiales × matCount: int32 materialId, uint8 R,G,B,A
         //   Meshes (pool) × meshCount:
         //           int32 vertexCount, uint8 idx16(1/0), int32 triCount,
@@ -1280,7 +1289,8 @@ namespace ConvertidorGeometrias
         static void ExportToViewerBin(List<MeshData> meshes, string path, PipelineStats stats)
         {
             const int MAGIC = 0x56544254; // "TBTV"
-            const int VERSION = 1;
+            const int VERSION = 2;
+            const float UNITS_PER_METER_OUT = 1.0f; // el pipeline siempre entrega metros de acá en más
 
             // Tabla de materiales: un color por MaterialId
             // Sólo las piezas con geometría real: si no, las habitaciones (MaterialId -1) meten
@@ -1370,6 +1380,7 @@ namespace ConvertidorGeometrias
             {
                 w.Write(MAGIC);
                 w.Write(VERSION);
+                w.Write(UNITS_PER_METER_OUT);
                 w.Write(matReps.Count);
                 w.Write(pool.Count);
                 w.Write(instSource.Count);
