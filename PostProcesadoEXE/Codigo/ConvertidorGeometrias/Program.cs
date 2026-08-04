@@ -127,16 +127,29 @@ namespace ConvertidorGeometrias
         private static string RUTA_BASE_SALIDA = @"C:\NO ENTRAR\JPG\DATA";
         private static string RUTA_LOG = "";
 
+        // Máximo de reintentos antes de dar un .bin por perdido definitivamente.
+        const int MAX_REINTENTOS_FALLIDOS = 2;
+
         static void Main(string[] args)
         {
-            if (args.Length > 1 && !string.IsNullOrWhiteSpace(args[1]))
+            if (args.Length > 0 && !string.IsNullOrWhiteSpace(args[0]))
             {
-                RUTA_BASE_SALIDA = Path.Combine(args[1], "DATA");
+                // La carpeta Temp se DERIVA del plugin folder que pasa el addin, en vez de estar
+                // hardcodeada. Si en una máquina el config.json tiene otro BasePluginFolder/TempFolderPath
+                // (el instalador preserva configs viejos), el addin escribía los .bin en una carpeta que
+                // este watcher jamás miraba: los .tbv y los JSON de habitaciones no aparecían nunca y no
+                // había ningún error visible en ningún lado.
+                CARPETA_TEMP = Path.Combine(args[0], "Temp");
                 RUTA_LOG = Path.Combine(args[0], "Logs", $"Log_Geometria_{DateTime.Now:yyyy-MM-dd}.txt");
             }
             else
             {
                 RUTA_LOG = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Log_Geometria_{DateTime.Now:yyyy-MM-dd}.txt");
+            }
+
+            if (args.Length > 1 && !string.IsNullOrWhiteSpace(args[1]))
+            {
+                RUTA_BASE_SALIDA = Path.Combine(args[1], "DATA");
             }
 
             Console.OutputEncoding = Encoding.UTF8;
@@ -155,10 +168,17 @@ namespace ConvertidorGeometrias
 
                 if (!Directory.Exists(CARPETA_TEMP)) Directory.CreateDirectory(CARPETA_TEMP);
                 if (!Directory.Exists(RUTA_BASE_SALIDA)) Directory.CreateDirectory(RUTA_BASE_SALIDA);
+                try { Directory.CreateDirectory(Path.GetDirectoryName(RUTA_LOG)); } catch { }
 
                 Log(" [|] TEMP: " + CARPETA_TEMP);
                 Log(" [F2] DATA: " + RUTA_BASE_SALIDA);
                 Log("------------------------------------------------------------");
+
+                // Al arrancar se reinyectan los .bin apartados que todavía tienen reintentos: un fallo
+                // transitorio (archivo a medio escribir porque Revit murió, pico de memoria) dejaba el
+                // proyecto sin .tbv ni JSON de habitaciones PARA SIEMPRE, sin reintento ni aviso.
+                ReintentarFallidos();
+                DateTime ultimaPasadaFallidos = DateTime.Now;
 
                 while (true)
                 {
@@ -173,6 +193,15 @@ namespace ConvertidorGeometrias
                             ProcesarArchivo(filePath);
                         }
                     }
+
+                    // Barrido periódico de apartados: el exe es perpetuo, así que esperar al próximo
+                    // arranque para reintentar puede ser esperar días.
+                    if ((DateTime.Now - ultimaPasadaFallidos).TotalMinutes >= 10)
+                    {
+                        ReintentarFallidos();
+                        ultimaPasadaFallidos = DateTime.Now;
+                    }
+
                     Thread.Sleep(500); // Pausa de escucha
                 }
             }
@@ -224,7 +253,12 @@ namespace ConvertidorGeometrias
                 stats.TrisOut = optimizedMeshes.Sum(m => (long)m.Indices.Count / 3);
                 stats.OutputPieces = optimizedMeshes.Count;
 
-                string baseName = Path.GetFileNameWithoutExtension(filePath).Replace("_Geometria", "");
+                // Se saca el sufijo "__intentoN" que agrega el reintento de apartados: sin esto, un
+                // archivo reinyectado escribiría "SO_DU__intento1_Geometria.tbv" en vez de pisar el
+                // nombre real, y el visor nunca encontraría el archivo del proyecto.
+                int intentoIgnorado;
+                string baseName = SepararNombreEIntento(
+                    Path.GetFileNameWithoutExtension(filePath), out intentoIgnorado).Replace("_Geometria", "");
 
                 // Las habitaciones se exportan PRIMERO: son un JSON chico e independiente, y si
                 // el escritor del .tbv falla no tiene por qué llevárselas puestas.
@@ -257,29 +291,92 @@ namespace ConvertidorGeometrias
             }
         }
 
+        private static string CarpetaFallidos => Path.Combine(CARPETA_TEMP, "_Fallidos");
+
         // Mueve un .bin que no se pudo procesar a "_Fallidos" junto al TEMP, para que el
-        // watcher no lo reintente en bucle pero tampoco se pierda.
+        // watcher no lo reintente en bucle pero tampoco se pierda. El nombre lleva el número de
+        // intento (__intentoN) para poder reinyectarlo después: sin contador, o se reintenta para
+        // siempre en bucle, o —como pasaba antes— no se reintenta nunca y el proyecto queda sin
+        // .tbv y sin JSON de habitaciones de forma permanente y silenciosa.
         private static void ApartarFallido(string filePath)
         {
             try
             {
                 if (!File.Exists(filePath)) return;
 
-                string carpeta = Path.Combine(CARPETA_TEMP, "_Fallidos");
-                Directory.CreateDirectory(carpeta);
+                Directory.CreateDirectory(CarpetaFallidos);
 
-                string destino = Path.Combine(
-                    carpeta,
-                    $"{Path.GetFileNameWithoutExtension(filePath)}_{DateTime.Now:yyyyMMdd_HHmmss}.bin");
+                int intento;
+                string baseName = SepararNombreEIntento(Path.GetFileNameWithoutExtension(filePath), out intento);
+                intento++;
 
+                string destino = Path.Combine(CarpetaFallidos, $"{baseName}__intento{intento}.bin");
+                if (File.Exists(destino)) File.Delete(destino);
                 File.Move(filePath, destino);
-                Log($"Archivo apartado para diagnóstico: {destino}");
+
+                if (intento > MAX_REINTENTOS_FALLIDOS)
+                {
+                    Log($"!!! DESCARTADO DEFINITIVAMENTE tras {intento} intentos: {destino}");
+                    Log($"!!! El proyecto '{baseName}' NO tiene .tbv ni JSON de habitaciones actualizados. " +
+                        "Hay que volver a exportarlo desde Revit.");
+                }
+                else
+                {
+                    Log($"Archivo apartado (intento {intento}/{MAX_REINTENTOS_FALLIDOS}), se reintentará: {destino}");
+                }
             }
             catch (Exception ex)
             {
                 Log("No se pudo apartar el archivo fallido: " + ex.Message);
                 // Último recurso: borrarlo, o el watcher entra en bucle infinito sobre él.
                 try { if (File.Exists(filePath)) File.Delete(filePath); } catch { }
+            }
+        }
+
+        // Devuelve el nombre base sin el sufijo "__intentoN" y saca por 'out' el N encontrado (0 si no había).
+        private static string SepararNombreEIntento(string nombreSinExtension, out int intento)
+        {
+            intento = 0;
+            const string marca = "__intento";
+
+            int pos = nombreSinExtension.LastIndexOf(marca, StringComparison.Ordinal);
+            if (pos < 0) return nombreSinExtension;
+
+            string cola = nombreSinExtension.Substring(pos + marca.Length);
+            int parsed;
+            if (!int.TryParse(cola, out parsed)) return nombreSinExtension;
+
+            intento = parsed;
+            return nombreSinExtension.Substring(0, pos);
+        }
+
+        // Devuelve a la cola los .bin apartados que todavía tienen reintentos disponibles.
+        // Los que agotaron los intentos se dejan quietos en _Fallidos para diagnóstico.
+        private static void ReintentarFallidos()
+        {
+            try
+            {
+                if (!Directory.Exists(CarpetaFallidos)) return;
+
+                foreach (string apartado in Directory.GetFiles(CarpetaFallidos, "*.bin"))
+                {
+                    int intento;
+                    string baseName = SepararNombreEIntento(Path.GetFileNameWithoutExtension(apartado), out intento);
+
+                    if (intento > MAX_REINTENTOS_FALLIDOS) continue; // ya se descartó, no insistir
+
+                    // Vuelve a la cola conservando el contador en el nombre, para que un nuevo fallo
+                    // lo incremente en vez de reiniciar el ciclo desde cero.
+                    string destino = Path.Combine(CARPETA_TEMP, $"{baseName}__intento{intento}.bin");
+                    if (File.Exists(destino)) continue; // ya hay uno en cola para ese proyecto
+
+                    File.Move(apartado, destino);
+                    Log($"Reinyectado a la cola (intento {intento + 1}/{MAX_REINTENTOS_FALLIDOS}): {Path.GetFileName(destino)}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("No se pudieron reintentar los archivos apartados: " + ex.Message);
             }
         }
 
