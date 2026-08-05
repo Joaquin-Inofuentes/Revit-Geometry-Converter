@@ -25,16 +25,23 @@
     <Delete Files="@(FilesToDelete)" />
   </Target>
 
+  <!--
+    Copia de conveniencia a la instalación LOCAL de Revit (ProgramData). El instalador oficial
+    (MIP_Revit_Setup.exe) NO depende de este target: toma el binario directo de
+    PostProcesadoEXE\OptimizarDumpDeRevit.exe. Por eso un fallo acá (típicamente 'Acceso denegado'
+    si ProgramData está bloqueado o el exe está en uso por un Revit abierto) no debe tumbar la
+    compilación: el .exe ya se generó en el target Build anterior a este.
+  -->
   <Target Name="InstallToMIP" AfterTargets="Build">
     <PropertyGroup>
       <MIPFolder>C:\ProgramData\Autodesk\Revit\Addins\2021\MIP</MIPFolder>
     </PropertyGroup>
-    <MakeDir Directories="$(MIPFolder)\Executables\Geometria" Condition="!Exists('$(MIPFolder)\Executables\Geometria')" />
-    <Copy SourceFiles="$(OutputPath)OptimizarDumpDeRevit.exe" DestinationFolder="$(MIPFolder)\Executables\Geometria" SkipUnchangedFiles="true" />
+    <MakeDir Directories="$(MIPFolder)\Executables\Geometria" Condition="!Exists('$(MIPFolder)\Executables\Geometria')" ContinueOnError="WarnAndContinue" />
+    <Copy SourceFiles="$(OutputPath)OptimizarDumpDeRevit.exe" DestinationFolder="$(MIPFolder)\Executables\Geometria" SkipUnchangedFiles="true" ContinueOnError="WarnAndContinue" />
     <!-- Copies config.json if it does not already exist to prevent overwriting user modifications -->
-    <Copy SourceFiles="config.json" DestinationFolder="$(MIPFolder)" Condition="!Exists('$(MIPFolder)\config.json')" />
+    <Copy SourceFiles="config.json" DestinationFolder="$(MIPFolder)" Condition="!Exists('$(MIPFolder)\config.json')" ContinueOnError="WarnAndContinue" />
     <!-- Always copy the batch script -->
-    <Copy SourceFiles="copiar_resultados.bat" DestinationFolder="$(MIPFolder)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="copiar_resultados.bat" DestinationFolder="$(MIPFolder)" SkipUnchangedFiles="true" ContinueOnError="WarnAndContinue" />
   </Target>
 
 </Project>
