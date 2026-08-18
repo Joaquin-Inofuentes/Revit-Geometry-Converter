@@ -31,6 +31,13 @@ namespace ConvertidorGeometrias
         // Color superficial simple del material de Revit (formato v2+). Alpha < 255 = vidrio/transparente.
         public byte ColR = 200, ColG = 200, ColB = 200, ColA = 255;
         public bool HasColor;
+
+        // Patrón de superficie vectorial del material (formato v6+), sólo en muros.
+        // Ángulo en radianes y separación entre líneas en METROS. El visor lo redibuja
+        // por fragmento en el shader; acá sólo se transporta. Separación <= 0 = sin hatch.
+        public float HatchAngle;
+        public float HatchSpacing;
+        public bool HasHatch { get { return HatchSpacing > 0f; } }
         public List<Vector3> Vertices = new List<Vector3>();
         public List<Vector3> Normals = new List<Vector3>();
         public List<int> Indices = new List<int>();
@@ -63,6 +70,7 @@ namespace ConvertidorGeometrias
         public int Repaired;       // piezas rotas reparadas restaurando su geometría original
         public int PoolMeshes;     // geometrías únicas en el .tbv tras deduplicar
         public long TbvBytes;      // tamaño del binario de visor
+        public int HatchedMats;    // materiales con patrón de superficie (hatch) en el .tbv
     }
 
     public class PiezaRota
@@ -416,6 +424,10 @@ namespace ConvertidorGeometrias
             sb.AppendLine($"Materiales transparentes (vidrio): {s.Transparent}");
             sb.AppendLine($"Piezas instanciadas (malla compartida): {s.Instanced}");
             sb.AppendLine($"Geometrías únicas en el .tbv (dedup): {s.PoolMeshes} de {s.OutputPieces} piezas");
+            sb.AppendLine($"Materiales con patrón de superficie (hatch de muros): {s.HatchedMats}" +
+                          (s.HatchedMats == 0 && s.FormatVersion >= 6
+                              ? " -- ningún material de muro tenía un patrón de MODELO utilizable"
+                              : ""));
             if (s.TbvBytes > 0) sb.AppendLine($"Binario de visor (.tbv): {s.TbvBytes / 1024:N0} KB");
 
             sb.AppendLine($"Tiempo total: {elapsed.TotalSeconds:F1} s");
@@ -599,6 +611,7 @@ namespace ConvertidorGeometrias
                 CategoryId = src.CategoryId,
                 ColR = src.ColR, ColG = src.ColG, ColB = src.ColB, ColA = src.ColA,
                 HasColor = src.HasColor,
+                HatchAngle = src.HatchAngle, HatchSpacing = src.HatchSpacing,
                 RoomLevel = src.RoomLevel,
                 RoomDepartment = src.RoomDepartment,
                 RoomName = src.RoomName,
@@ -637,6 +650,9 @@ namespace ConvertidorGeometrias
                     CategoryId = first.CategoryId,
                     ColR = first.ColR, ColG = first.ColG, ColB = first.ColB, ColA = first.ColA,
                     HasColor = first.HasColor,
+                    // Todas las caras del grupo comparten (GUID, MaterialId), así que comparten
+                    // material y por lo tanto patrón: el de la primera vale para la pieza entera.
+                    HatchAngle = first.HatchAngle, HatchSpacing = first.HatchSpacing,
                     // Sin esto la metadata de habitación se pierde acá y el JSON sale con
                     // Level/Department/Name vacíos (el visor descarta las que no tienen Level).
                     RoomLevel = first.RoomLevel,
@@ -792,8 +808,15 @@ namespace ConvertidorGeometrias
                 Guid = source.Guid,
                 ElementId = source.ElementId,
                 MaterialId = source.MaterialId,
+                // CategoryId se perdía acá: toda pieza decimada (puertas, ventanas, mobiliario —
+                // muros y losas ni llegan, están protegidos) salía al .tbv con categoría 0. En el
+                // visor eso rompe el filtro por categoría y la transparencia de puertas, que se
+                // deciden justamente por catId. Los muros no dependían de esto, pero el hatch se
+                // enciende por categoría, así que el bug tenía que irse antes de apoyarse ahí.
+                CategoryId = source.CategoryId,
                 ColR = source.ColR, ColG = source.ColG, ColB = source.ColB, ColA = source.ColA,
-                HasColor = source.HasColor
+                HasColor = source.HasColor,
+                HatchAngle = source.HatchAngle, HatchSpacing = source.HatchSpacing
             };
 
             foreach (var v in decimatedMdMesh.Vertices)
@@ -976,6 +999,8 @@ namespace ConvertidorGeometrias
         // v3: además agrega el id de BuiltInCategory (int32) después del MaterialId.
         // v4: cabecera con el Punto Base del Proyecto + metadata de habitaciones.
         // v5: las coordenadas vienen en METROS (v4 y anteriores venían en pies).
+        // v6: cada bloque agrega el patrón de superficie (2 floats: ángulo rad, separación m)
+        //     justo después del RGBA. Sólo los muros lo traen distinto de cero.
         static List<MeshData> LeerBinario(string path, PipelineStats stats)
         {
             var meshes = new List<MeshData>();
@@ -983,7 +1008,7 @@ namespace ConvertidorGeometrias
             using (var fs = File.OpenRead(path))
             using (var reader = new BinaryReader(fs))
             {
-                bool v2 = false, v3 = false, v4 = false, v5 = false;
+                bool v2 = false, v3 = false, v4 = false, v5 = false, v6 = false;
                 if (fs.Length >= 8)
                 {
                     int magic = reader.ReadInt32();
@@ -994,6 +1019,7 @@ namespace ConvertidorGeometrias
                         v3 = version >= 3;
                         v4 = version >= 4;
                         v5 = version >= 5;
+                        v6 = version >= 6;
                         stats.FormatVersion = version;
                     }
                     else
@@ -1036,6 +1062,15 @@ namespace ConvertidorGeometrias
                         mesh.ColB = reader.ReadByte();
                         mesh.ColA = reader.ReadByte();
                         mesh.HasColor = true;
+                    }
+
+                    if (v6)
+                    {
+                        // El ángulo NO se toca al rotar Z-up -> Y-up (ver más abajo): el patrón
+                        // vive en el plano de la cara del muro, y esa rotación mantiene la
+                        // horizontal horizontal y la vertical vertical dentro de un muro.
+                        mesh.HatchAngle = reader.ReadSingle();
+                        mesh.HatchSpacing = reader.ReadSingle();
                     }
 
                     int vertexCount = reader.ReadInt32();
@@ -1374,7 +1409,14 @@ namespace ConvertidorGeometrias
         // 1.0 porque LeerBinario ya convirtió todo a metros al leer el
         // export.bin (ver aMetros más arriba); un lector v1 (sin este campo)
         // debe asumir pies, como venía siendo.
-        //   Materiales × matCount: int32 materialId, uint8 R,G,B,A
+        // v3 (2026-08): la tabla de materiales agrega el patrón de superficie vectorial
+        // (float32 hatchAngle en radianes, float32 hatchSpacing en metros). Es la definición
+        // del FillPattern de Revit, NO una textura: el visor reconstruye las líneas por
+        // fragmento en el shader, así que el patrón se ve nítido a cualquier zoom y suma
+        // 8 bytes por material (no por pieza) al archivo. spacing <= 0 = sin patrón.
+        // Sólo los muros traen patrón, y el visor además lo enciende sólo en esa categoría.
+        //   Materiales × matCount: int32 materialId, uint8 R,G,B,A,
+        //                          (v3+) float32 hatchAngle, float32 hatchSpacing
         //   Meshes (pool) × meshCount:
         //           int32 vertexCount, uint8 idx16(1/0), int32 triCount,
         //           float32 positions[vc*3], int8 normals[vc*3],
@@ -1386,7 +1428,7 @@ namespace ConvertidorGeometrias
         static void ExportToViewerBin(List<MeshData> meshes, string path, PipelineStats stats)
         {
             const int MAGIC = 0x56544254; // "TBTV"
-            const int VERSION = 2;
+            const int VERSION = 3;
             const float UNITS_PER_METER_OUT = 1.0f; // el pipeline siempre entrega metros de acá en más
 
             // Tabla de materiales: un color por MaterialId
@@ -1398,10 +1440,20 @@ namespace ConvertidorGeometrias
             {
                 if (m.Vertices == null || m.Vertices.Count == 0 || m.Indices.Count < 3) continue;
 
-                if (!matIndexById.ContainsKey(m.MaterialId))
+                int existente;
+                if (!matIndexById.TryGetValue(m.MaterialId, out existente))
                 {
                     matIndexById[m.MaterialId] = matReps.Count;
                     matReps.Add(m);
+                }
+                else if (m.HasHatch && !matReps[existente].HasHatch)
+                {
+                    // El mismo material de Revit puede estar en un muro Y en una losa, y sólo
+                    // el muro trae patrón. Como el primero que aparece gana el lugar de
+                    // representante, si ese primero era la losa el hatch se perdía entero.
+                    // Gana el que SÍ tiene patrón; que la losa no se raye lo garantiza el
+                    // visor, que enciende el hatch sólo en la categoría de muros.
+                    matReps[existente] = m;
                 }
             }
 
@@ -1499,6 +1551,10 @@ namespace ConvertidorGeometrias
                         byte b = (byte)(rndColors.Next(0, 180) + 60);
                         w.Write(r); w.Write(g); w.Write(b); w.Write((byte)255);
                     }
+                    // v3: patrón de superficie vectorial (0,0 = sin patrón)
+                    w.Write(mr.HatchAngle);
+                    w.Write(mr.HatchSpacing);
+                    if (mr.HasHatch) stats.HatchedMats++;
                 }
 
                 // Meshes del pool
