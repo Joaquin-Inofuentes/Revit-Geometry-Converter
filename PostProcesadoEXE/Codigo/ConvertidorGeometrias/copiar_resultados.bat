@@ -1,4 +1,7 @@
 @echo off
+setlocal EnableExtensions
+
+set "MIP=C:\ProgramData\Autodesk\Revit\Addins\2021\MIP"
 
 REM =========================
 REM 1. VERIFICAR REVIT
@@ -24,19 +27,46 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 REM =========================
-REM 2. VERIFICAR CONTROLADOR ANULADO PARA SESION 0
+REM 2. NO PISAR UNA COLA QUE YA TIENE TRABAJO
 REM =========================
+REM Antes este bat copiaba resultados.txt -> pedidos.txt SIEMPRE, sin mirar si ya habia un
+REM lote en curso. El addin toma pedidos.txt y lo ACUMULA en tomados.txt, asi que cada
+REM corrida del bat volvia a encolar los MISMOS modelos encima de los que ya estaban
+REM pendientes. Medido el 2026-08-18: tres corridas del bat dejaron tomados.txt con 36
+REM lineas para 12 modelos reales, o sea cada modelo exportandose 3 veces -- horas de
+REM trabajo para producir exactamente los mismos archivos.
+REM
+REM Se agrava con el relanzamiento automatico tras un SubmitPrint() colgado (ver
+REM ImageProcessing.AbortarPorSubmitPrintColgado): ahi Revit se reabre SOLO y retoma
+REM tomados.txt, asi que si ademas alguien corre el bat, la cola se vuelve a duplicar.
+REM
+REM Regla: si tomados.txt tiene contenido, hay un lote vivo y no se toca nada. El addin lo
+REM termina solo. Recien con la cola vacia se vuelve a encolar.
+REM
+REM Se mira el TAMANO del archivo y no la cantidad de lineas: un "for /f" que cuente lineas
+REM adentro de un bloque IF necesita expansion retardada para poder leer el resultado, y ese
+REM es un clasico de bat que falla en silencio (la variable sale vacia y el IF nunca entra).
+REM Con %%~zI el dato esta disponible en el acto y no hay nada que expandir despues.
+set "HAYLOTE="
+if exist "%MIP%\tomados.txt" for %%I in ("%MIP%\tomados.txt") do if %%~zI GTR 0 set "HAYLOTE=1"
 
+if defined HAYLOTE (
+    echo Ya hay un lote en curso en tomados.txt: no se vuelve a encolar para no duplicarlo.
+    echo Para forzar una cola nueva: borrar tomados.txt y volver a correr este bat.
+    goto :FIN
+)
 
 REM =========================
-REM 3. COPIAR SIEMPRE
+REM 3. COPIAR (solo si no habia lote activo)
 REM =========================
-IF exist "C:\ProgramData\Autodesk\Revit\Addins\2021\MIP\resultados.txt" (
-    copy "C:\ProgramData\Autodesk\Revit\Addins\2021\MIP\resultados.txt" "C:\ProgramData\Autodesk\Revit\Addins\2021\MIP\pedidos.txt" /Y
-    echo Copia realizada.
+IF EXIST "%MIP%\resultados.txt" (
+    copy "%MIP%\resultados.txt" "%MIP%\pedidos.txt" /Y >nul
+    echo Copia realizada: resultados.txt -^> pedidos.txt
 ) else (
     echo ERROR: resultados.txt no existe.
 )
 
+:FIN
 echo Proceso terminado.
-exit
+endlocal
+exit /B 0

@@ -161,9 +161,7 @@ namespace ConvertidorGeometrias
             }
 
             Console.OutputEncoding = Encoding.UTF8;
-            Log("============================================================");
-            Log("        REVIT GEOMETRIAS WATCHER - INICIANDO");
-            Log("============================================================");
+            Log("=== POST-PROCESO DE GEOMETRIAS - INICIANDO ===");
 
             bool createdNew;
             using (Mutex mutex = new Mutex(true, APP_GUID, out createdNew))
@@ -178,9 +176,16 @@ namespace ConvertidorGeometrias
                 if (!Directory.Exists(RUTA_BASE_SALIDA)) Directory.CreateDirectory(RUTA_BASE_SALIDA);
                 try { Directory.CreateDirectory(Path.GetDirectoryName(RUTA_LOG)); } catch { }
 
-                Log(" [|] TEMP: " + CARPETA_TEMP);
-                Log(" [F2] DATA: " + RUTA_BASE_SALIDA);
-                Log("------------------------------------------------------------");
+                Consola.Encabezado(
+                    "POST-PROCESO DE GEOMETRIAS",
+                    "Suelda y diezma (QEM) la geometria que vuelca Revit, valida y repara las piezas rotas, y publica el .tbv del visor 3D mas el JSON de habitaciones.",
+                    new[]
+                    {
+                        new[] { "Entrada", CARPETA_TEMP,      "|"  },
+                        new[] { "Salida",  RUTA_BASE_SALIDA,  "F2" },
+                        new[] { "Log",     RUTA_LOG,          "L"  }
+                    });
+                Log("TEMP: " + CARPETA_TEMP + " | DATA: " + RUTA_BASE_SALIDA);
 
                 // Al arrancar se reinyectan los .bin apartados que todavía tienen reintentos: un fallo
                 // transitorio (archivo a medio escribir porque Revit murió, pico de memoria) dejaba el
@@ -226,9 +231,12 @@ namespace ConvertidorGeometrias
 
         private static void ProcesarArchivo(string filePath)
         {
-            Log($"\n==================================================");
-            Log($"Procesando: {Path.GetFileName(filePath)}");
-            Log($"==================================================");
+            int intentoIgnorado0;
+            string nombreProyecto = SepararNombreEIntento(
+                Path.GetFileNameWithoutExtension(filePath), out intentoIgnorado0).Replace("_Geometria", "");
+
+            Log($"===== Procesando: {Path.GetFileName(filePath)} =====");
+            Consola.FilaInicio(nombreProyecto);
 
             try
             {
@@ -239,17 +247,19 @@ namespace ConvertidorGeometrias
                 List<MeshData> meshes = LeerBinario(filePath, stats);
                 Log($"Formato v{stats.FormatVersion}{(stats.FormatVersion >= 2 ? " (con color de material)" : " (legado, colores aleatorios)")}. Se leyeron {meshes.Count} mallas.");
 
-                Console.WriteLine("Agrupando, soldando y diezmando (QEM) geometría...");
+                // Los porcentajes son las etapas del pipeline, no un conteo de piezas: no hay una
+                // unidad de avance comun entre soldar, diezmar, validar y escribir.
+                Consola.FilaProgreso(20);
                 var weldedOriginals = new Dictionary<string, MeshData>();
                 List<MeshData> optimizedMeshes = OptimizeMeshes(meshes, stats, weldedOriginals);
-                Console.WriteLine($"Geometría reducida a {optimizedMeshes.Count} piezas separadas.");
+                Log($"Geometría reducida a {optimizedMeshes.Count} piezas separadas.");
 
-                Console.WriteLine("Validando piezas...");
+                Consola.FilaProgreso(55);
                 var rotasDetectadas = ValidarPiezas(weldedOriginals, optimizedMeshes);
 
                 if (rotasDetectadas.Count > 0)
                 {
-                    Console.WriteLine($"Se detectaron {rotasDetectadas.Count} piezas rotas. Reparando...");
+                    Log($"Se detectaron {rotasDetectadas.Count} piezas rotas. Reparando...");
                     RepararPiezas(rotasDetectadas, weldedOriginals, optimizedMeshes, stats);
                 }
 
@@ -271,12 +281,14 @@ namespace ConvertidorGeometrias
                 // Las habitaciones se exportan PRIMERO: son un JSON chico e independiente, y si
                 // el escritor del .tbv falla no tiene por qué llevárselas puestas.
                 string roomsPath = Path.Combine(RUTA_BASE_SALIDA, baseName + "_Geometria_Habitaciones.json");
-                Console.WriteLine($"Exportando data de habitaciones: {roomsPath}");
+                Consola.FilaProgreso(75);
+                Log($"Exportando data de habitaciones: {roomsPath}");
                 ExportRoomsJson(optimizedMeshes, roomsPath, stats);
 
                 string tbvPath = Path.Combine(RUTA_BASE_SALIDA, baseName + "_Geometria.tbv");
 
-                Console.WriteLine($"Exportando binario de visor (dedup + índice espacial): {tbvPath}");
+                Consola.FilaProgreso(90);
+                Log($"Exportando binario de visor (dedup + índice espacial): {tbvPath}");
                 ExportToViewerBin(optimizedMeshes, tbvPath, stats);
 
                 string reportPath = Path.Combine(RUTA_BASE_SALIDA, baseName + "_Geometria_reporte.txt");
@@ -287,11 +299,15 @@ namespace ConvertidorGeometrias
                 File.WriteAllText(reportPath, reporte);
                 Log($"Reporte guardado en: {reportPath}");
 
+                Consola.FilaFin(nombreProyecto, 100, swFile.Elapsed, true,
+                    $"{stats.OutputPieces} piezas" + (rotasFinales.Count > 0 ? $", {rotasFinales.Count} rota(s)" : ""));
+
                 if (File.Exists(filePath)) File.Delete(filePath);
             }
             catch (Exception ex)
             {
-                Log("\n !!! FALLA: " + ex.Message + "\n" + ex.StackTrace);
+                Log(" !!! FALLA: " + ex.Message + "\n" + ex.StackTrace);
+                Consola.FilaFin(nombreProyecto, 0, TimeSpan.Zero, false, ex.Message);
 
                 // El .bin es irreproducible sin volver a exportar desde Revit: en vez de
                 // borrarlo se aparta, para poder diagnosticar y reprocesar.
@@ -388,9 +404,14 @@ namespace ConvertidorGeometrias
             }
         }
 
+        /// <summary>
+        /// Traza al ARCHIVO unicamente. La consola no la escribe esto: la dibuja Consola, que
+        /// mantiene un renglon por proyecto. Antes cada Log() ademas escupia su linea a la
+        /// consola, y una corrida dejaba decenas de renglones de detalle interno por proyecto
+        /// entre los que no se encontraba el estado real de ninguno.
+        /// </summary>
         private static void Log(string msg)
         {
-            Console.WriteLine(msg);
             try
             {
                 if (!string.IsNullOrEmpty(RUTA_LOG))
@@ -597,7 +618,9 @@ namespace ConvertidorGeometrias
                 else finales.Add(reparada);
 
                 stats.Repaired++;
-                Console.WriteLine($"  Reparada: ElementId {rota.ElementId} | {rota.Problema}");
+                // Al log, no a la consola: partiria el renglon del proyecto en curso. El conteo
+                // de reparadas sale igual en el reporte y en el detalle del renglon.
+                Log($"  Reparada: ElementId {rota.ElementId} | {rota.Problema}");
             }
         }
 
@@ -1122,8 +1145,8 @@ namespace ConvertidorGeometrias
                     // Antes esto era el caso NORMAL (el soldado borraba el centroide) y salía
                     // como [0,0,0] silencioso. Ahora es una anomalía real y se reporta.
                     stats.RoomsSinCentro++;
-                    Console.WriteLine($"  AVISO: habitación ElementId {m.ElementId} " +
-                                      $"('{m.RoomName}') llegó sin centroide; se omite del JSON.");
+                    Log($"  AVISO: habitación ElementId {m.ElementId} " +
+                        $"('{m.RoomName}') llegó sin centroide; se omite del JSON.");
                     continue;
                 }
 
@@ -1614,6 +1637,112 @@ namespace ConvertidorGeometrias
         {
             f = Math.Max(-1f, Math.Min(1f, f));
             return (sbyte)Math.Round(f * 127f);
+        }
+    }
+
+    /// <summary>
+    /// Render de la consola, unificado con el resto de los post-procesadores del pipeline
+    /// (Parametros, Tablas, Posiciones, Geometrias, Planos): un encabezado fijo arriba con el
+    /// nombre y la descripcion del proceso, y de ahi para abajo UN RENGLON POR PROYECTO con
+    /// hora, nombre, porcentaje y tiempo.
+    ///
+    /// El renglon se dibuja en el lugar mientras avanza (con \r) y se cierra con un salto de
+    /// linea recien cuando el proyecto termina, asi la consola queda como un historial legible
+    /// en vez de una barra de progreso que se pisa a si misma.
+    /// </summary>
+    public static class Consola
+    {
+        private const int ANCHO_NOMBRE = 42;
+        private static string _nombreActual = "";
+
+        public static void Encabezado(string titulo, string descripcion, string[][] rutas)
+        {
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("============================================================");
+            Console.WriteLine("  MIP  -  " + titulo);
+            Console.ResetColor();
+            Console.ForegroundColor = ConsoleColor.Gray;
+            foreach (string linea in Envolver(descripcion, 56)) Console.WriteLine("  " + linea);
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("------------------------------------------------------------");
+            Console.ResetColor();
+            foreach (string[] r in rutas)
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.Write("  [" + r[2].PadRight(2) + "] " + r[0].PadRight(8) + " ");
+                Console.ForegroundColor = ConsoleColor.Gray;
+                Console.WriteLine(r[1]);
+            }
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("============================================================");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine("  HORA   PROYECTO" + new string(' ', ANCHO_NOMBRE - 8) + "  %      TIEMPO");
+            Console.ResetColor();
+        }
+
+        public static void FilaInicio(string nombre)
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("\r  " + DateTime.Now.ToString("HH:mm") + "  " + Ajustar(nombre) + "    0%          -");
+            Console.ResetColor();
+        }
+
+        public static void FilaProgreso(int pct)
+        {
+            if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("\r  " + DateTime.Now.ToString("HH:mm") + "  " + Ajustar(_nombreActual)
+                        + string.Format("{0,5}%", pct) + "          -");
+            Console.ResetColor();
+        }
+
+        public static void FilaFin(string nombre, int pct, TimeSpan t, bool ok, string detalle)
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("\r  " + DateTime.Now.ToString("HH:mm") + "  ");
+            Console.ForegroundColor = ok ? ConsoleColor.Gray : ConsoleColor.Red;
+            Console.Write(Ajustar(nombre));
+            Console.ForegroundColor = ok ? ConsoleColor.Green : ConsoleColor.Red;
+            Console.Write(ok ? string.Format("{0,5}%", pct) : "  ERROR");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write(string.Format("{0,11}", Duracion(t)));
+            if (!string.IsNullOrEmpty(detalle))
+            {
+                Console.ForegroundColor = ok ? ConsoleColor.DarkGray : ConsoleColor.Red;
+                Console.Write("   " + detalle);
+            }
+            Console.ResetColor();
+            Console.WriteLine();
+        }
+
+        private static string Ajustar(string s)
+        {
+            if (s == null) s = "";
+            _nombreActual = s;
+            if (s.Length > ANCHO_NOMBRE) return s.Substring(0, ANCHO_NOMBRE - 1) + "~";
+            return s.PadRight(ANCHO_NOMBRE);
+        }
+
+        /// <summary>Tiempo legible: "2.4s" hasta un minuto, "3m 12s" de ahi para arriba.</summary>
+        public static string Duracion(TimeSpan t)
+        {
+            if (t.TotalSeconds < 60) return t.TotalSeconds.ToString("F1") + "s";
+            return (int)t.TotalMinutes + "m " + t.Seconds + "s";
+        }
+
+        private static string[] Envolver(string texto, int ancho)
+        {
+            var lineas = new List<string>();
+            string actual = "";
+            foreach (string palabra in (texto ?? "").Split(' '))
+            {
+                if (actual.Length == 0) actual = palabra;
+                else if (actual.Length + 1 + palabra.Length <= ancho) actual += " " + palabra;
+                else { lineas.Add(actual); actual = palabra; }
+            }
+            if (actual.Length > 0) lineas.Add(actual);
+            return lineas.ToArray();
         }
     }
 }
