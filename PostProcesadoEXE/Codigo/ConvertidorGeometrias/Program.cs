@@ -236,7 +236,7 @@ namespace ConvertidorGeometrias
                 Path.GetFileNameWithoutExtension(filePath), out intentoIgnorado0).Replace("_Geometria", "");
 
             Log($"===== Procesando: {Path.GetFileName(filePath)} =====");
-            Consola.FilaInicio(nombreProyecto);
+            Consola.FilaInicio(nombreProyecto, "leyendo dump");
 
             try
             {
@@ -249,12 +249,12 @@ namespace ConvertidorGeometrias
 
                 // Los porcentajes son las etapas del pipeline, no un conteo de piezas: no hay una
                 // unidad de avance comun entre soldar, diezmar, validar y escribir.
-                Consola.FilaProgreso(20);
+                Consola.FilaProgreso(20, "soldando y diezmando");
                 var weldedOriginals = new Dictionary<string, MeshData>();
                 List<MeshData> optimizedMeshes = OptimizeMeshes(meshes, stats, weldedOriginals);
                 Log($"Geometría reducida a {optimizedMeshes.Count} piezas separadas.");
 
-                Consola.FilaProgreso(55);
+                Consola.FilaProgreso(55, "validando piezas");
                 var rotasDetectadas = ValidarPiezas(weldedOriginals, optimizedMeshes);
 
                 if (rotasDetectadas.Count > 0)
@@ -281,13 +281,13 @@ namespace ConvertidorGeometrias
                 // Las habitaciones se exportan PRIMERO: son un JSON chico e independiente, y si
                 // el escritor del .tbv falla no tiene por qué llevárselas puestas.
                 string roomsPath = Path.Combine(RUTA_BASE_SALIDA, baseName + "_Geometria_Habitaciones.json");
-                Consola.FilaProgreso(75);
+                Consola.FilaProgreso(75, "exportando ambientes");
                 Log($"Exportando data de habitaciones: {roomsPath}");
                 ExportRoomsJson(optimizedMeshes, roomsPath, stats);
 
                 string tbvPath = Path.Combine(RUTA_BASE_SALIDA, baseName + "_Geometria.tbv");
 
-                Consola.FilaProgreso(90);
+                Consola.FilaProgreso(90, "escribiendo tbv");
                 Log($"Exportando binario de visor (dedup + índice espacial): {tbvPath}");
                 ExportToViewerBin(optimizedMeshes, tbvPath, stats);
 
@@ -299,7 +299,7 @@ namespace ConvertidorGeometrias
                 File.WriteAllText(reportPath, reporte);
                 Log($"Reporte guardado en: {reportPath}");
 
-                Consola.FilaFin(nombreProyecto, 100, swFile.Elapsed, true,
+                Consola.FilaFin(nombreProyecto, swFile.Elapsed, true,
                     $"{stats.OutputPieces} piezas" + (rotasFinales.Count > 0 ? $", {rotasFinales.Count} rota(s)" : ""));
 
                 if (File.Exists(filePath)) File.Delete(filePath);
@@ -307,7 +307,7 @@ namespace ConvertidorGeometrias
             catch (Exception ex)
             {
                 Log(" !!! FALLA: " + ex.Message + "\n" + ex.StackTrace);
-                Consola.FilaFin(nombreProyecto, 0, TimeSpan.Zero, false, ex.Message);
+                Consola.FilaFin(nombreProyecto, TimeSpan.Zero, false, ex.Message);
 
                 // El .bin es irreproducible sin volver a exportar desde Revit: en vez de
                 // borrarlo se aparta, para poder diagnosticar y reprocesar.
@@ -1644,28 +1644,41 @@ namespace ConvertidorGeometrias
     /// Render de la consola, unificado con el resto de los post-procesadores del pipeline
     /// (Parametros, Tablas, Posiciones, Geometrias, Planos): un encabezado fijo arriba con el
     /// nombre y la descripcion del proceso, y de ahi para abajo UN RENGLON POR PROYECTO con
-    /// hora, nombre, porcentaje y tiempo.
+    /// hora de inicio, hora de fin, barra de avance, porcentaje, etapa en curso y duracion.
     ///
     /// El renglon se dibuja en el lugar mientras avanza (con \r) y se cierra con un salto de
     /// linea recien cuando el proyecto termina, asi la consola queda como un historial legible
     /// en vez de una barra de progreso que se pisa a si misma.
+    ///
+    /// La barra usa '#' y '-' a proposito, no bloques Unicode: estos exes corren en la consola
+    /// que les toque y con la codepage por defecto los caracteres de bloque salen como '?'.
     /// </summary>
     public static class Consola
     {
-        private const int ANCHO_NOMBRE = 42;
-        private static string _nombreActual = "";
+        private const int ANCHO_NOMBRE = 22;
+        private const int ANCHO_ETAPA = 20;
+        private const int ANCHO_BARRA = 10;
+        private const string SIN_HORA = "--:--";
+
+        private static string _nombre = "";
+        private static string _etapa = "";
+        private static DateTime _inicio;
+        private static int _pct;
+
+        /// <summary>Hora en que arranco el proyecto en curso; la usa el log para su columna HoraInicio.</summary>
+        public static DateTime InicioActual { get { return _inicio; } }
 
         public static void Encabezado(string titulo, string descripcion, string[][] rutas)
         {
             Console.WriteLine();
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("============================================================");
+            Console.WriteLine(new string('=', 88));
             Console.WriteLine("  MIP  -  " + titulo);
             Console.ResetColor();
             Console.ForegroundColor = ConsoleColor.Gray;
-            foreach (string linea in Envolver(descripcion, 56)) Console.WriteLine("  " + linea);
+            foreach (string linea in Envolver(descripcion, 84)) Console.WriteLine("  " + linea);
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("------------------------------------------------------------");
+            Console.WriteLine(new string('-', 88));
             Console.ResetColor();
             foreach (string[] r in rutas)
             {
@@ -1675,53 +1688,107 @@ namespace ConvertidorGeometrias
                 Console.WriteLine(r[1]);
             }
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("============================================================");
+            Console.WriteLine(new string('=', 88));
             Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine("  HORA   PROYECTO" + new string(' ', ANCHO_NOMBRE - 8) + "  %      TIEMPO");
+            // Los anchos siguen EXACTAMENTE los de Pintar(); si se toca uno hay que tocar el otro.
+            Console.WriteLine("  " + "INICIO".PadRight(8) + "FIN".PadRight(7)
+                            + "PROYECTO".PadRight(ANCHO_NOMBRE + 1)
+                            + "AVANCE".PadRight(ANCHO_BARRA + 3)
+                            + "%".PadLeft(4) + "  "
+                            + "ETAPA".PadRight(ANCHO_ETAPA + 1)
+                            + "TIEMPO".PadLeft(8));
             Console.ResetColor();
         }
 
-        public static void FilaInicio(string nombre)
+        /// <summary>Abre el renglon del proyecto y deja anotada la hora de inicio.</summary>
+        public static void FilaInicio(string nombre, string etapa)
         {
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write("\r  " + DateTime.Now.ToString("HH:mm") + "  " + Ajustar(nombre) + "    0%          -");
-            Console.ResetColor();
+            _nombre = nombre ?? "";
+            _etapa = etapa ?? "";
+            _inicio = DateTime.Now;
+            _pct = 0;
+            Pintar(false, TimeSpan.Zero, true, null);
         }
 
         public static void FilaProgreso(int pct)
         {
-            if (pct < 0) pct = 0; if (pct > 100) pct = 100;
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write("\r  " + DateTime.Now.ToString("HH:mm") + "  " + Ajustar(_nombreActual)
-                        + string.Format("{0,5}%", pct) + "          -");
-            Console.ResetColor();
+            _pct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
+            Pintar(false, TimeSpan.Zero, true, null);
         }
 
-        public static void FilaFin(string nombre, int pct, TimeSpan t, bool ok, string detalle)
+        /// <summary>Avance + cambio de etapa, para los procesos que pasan por varias fases.</summary>
+        public static void FilaProgreso(int pct, string etapa)
         {
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write("\r  " + DateTime.Now.ToString("HH:mm") + "  ");
-            Console.ForegroundColor = ok ? ConsoleColor.Gray : ConsoleColor.Red;
-            Console.Write(Ajustar(nombre));
-            Console.ForegroundColor = ok ? ConsoleColor.Green : ConsoleColor.Red;
-            Console.Write(ok ? string.Format("{0,5}%", pct) : "  ERROR");
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write(string.Format("{0,11}", Duracion(t)));
-            if (!string.IsNullOrEmpty(detalle))
-            {
-                Console.ForegroundColor = ok ? ConsoleColor.DarkGray : ConsoleColor.Red;
-                Console.Write("   " + detalle);
-            }
-            Console.ResetColor();
+            if (!string.IsNullOrEmpty(etapa)) _etapa = etapa;
+            FilaProgreso(pct);
+        }
+
+        /// <summary>
+        /// Cierra el renglon: completa la hora de fin, la duracion y el resumen, y baja de linea.
+        ///
+        /// En EXITO el resumen ocupa la columna ETAPA, que ya cumplio su funcion de decir que
+        /// estaba haciendo. En ERROR no: el mensaje de excepcion casi siempre pasa los 20
+        /// caracteres de la columna y recortarlo lo vuelve inservible ("No se puede leer m~"),
+        /// asi que la columna dice ERROR y el texto completo se escribe al final del renglon,
+        /// donde puede extenderse sin desalinear las columnas.
+        /// </summary>
+        public static void FilaFin(string nombre, TimeSpan t, bool ok, string resumen)
+        {
+            if (!string.IsNullOrEmpty(nombre)) _nombre = nombre;
+            if (ok) _pct = 100;
+            _etapa = ok ? (resumen ?? "") : "ERROR";
+            Pintar(true, t, ok, DateTime.Now, ok ? null : resumen);
             Console.WriteLine();
         }
 
-        private static string Ajustar(string s)
+        private static void Pintar(bool terminado, TimeSpan t, bool ok, DateTime? fin)
+        {
+            Pintar(terminado, t, ok, fin, null);
+        }
+
+        private static void Pintar(bool terminado, TimeSpan t, bool ok, DateTime? fin, string cola)
+        {
+            string sIni = _inicio == default(DateTime) ? SIN_HORA : _inicio.ToString("HH:mm");
+            string sFin = fin.HasValue ? fin.Value.ToString("HH:mm") : SIN_HORA;
+
+            int llenos = (int)Math.Round(_pct / 100.0 * ANCHO_BARRA);
+            if (llenos < 0) llenos = 0;
+            if (llenos > ANCHO_BARRA) llenos = ANCHO_BARRA;
+
+            Console.Write("\r");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("  " + sIni.PadRight(8) + sFin.PadRight(7));
+
+            Console.ForegroundColor = ok ? ConsoleColor.Gray : ConsoleColor.Red;
+            Console.Write(Recortar(_nombre, ANCHO_NOMBRE) + " ");
+
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("[");
+            Console.ForegroundColor = !ok ? ConsoleColor.Red : (terminado ? ConsoleColor.Green : ConsoleColor.Cyan);
+            Console.Write(new string('#', llenos) + new string('-', ANCHO_BARRA - llenos));
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("] ");
+
+            Console.ForegroundColor = !ok ? ConsoleColor.Red : (terminado ? ConsoleColor.Green : ConsoleColor.Gray);
+            Console.Write(ok ? string.Format("{0,3}%", _pct) : " ERR");
+
+            Console.ForegroundColor = !ok ? ConsoleColor.Red : ConsoleColor.DarkGray;
+            Console.Write("  " + Recortar(_etapa, ANCHO_ETAPA) + " ");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write(string.Format("{0,8}", terminado ? Duracion(t) : "-"));
+            if (!string.IsNullOrEmpty(cola))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Write("   " + cola.Replace('\n', ' ').Replace('\r', ' '));
+            }
+            Console.ResetColor();
+        }
+
+        private static string Recortar(string s, int ancho)
         {
             if (s == null) s = "";
-            _nombreActual = s;
-            if (s.Length > ANCHO_NOMBRE) return s.Substring(0, ANCHO_NOMBRE - 1) + "~";
-            return s.PadRight(ANCHO_NOMBRE);
+            if (s.Length > ancho) return s.Substring(0, ancho - 1) + "~";
+            return s.PadRight(ancho);
         }
 
         /// <summary>Tiempo legible: "2.4s" hasta un minuto, "3m 12s" de ahi para arriba.</summary>
