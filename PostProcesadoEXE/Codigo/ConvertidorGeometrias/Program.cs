@@ -1652,6 +1652,13 @@ namespace ConvertidorGeometrias
     ///
     /// La barra usa '#' y '-' a proposito, no bloques Unicode: estos exes corren en la consola
     /// que les toque y con la codepage por defecto los caracteres de bloque salen como '?'.
+    ///
+    /// TODO el dibujado va bajo un candado. No es precaucion teorica: en Planos el avance lo
+    /// reportan varios hilos a la vez (el lote de planos corre en Parallel.ForEach), y sin el
+    /// candado dos hilos escribiendo su \r y sus fragmentos se entrelazaban dejando renglones
+    /// ilegibles del tipo
+    ///   "SO_DU  08:09  [SO_DU  ##------[] ##------ 25%]  25%  generando..SO_DU  08:09..."
+    /// Los otros cuatro post-procesadores son monohilo y el candado no les cuesta nada.
     /// </summary>
     public static class Consola
     {
@@ -1660,6 +1667,7 @@ namespace ConvertidorGeometrias
         private const int ANCHO_BARRA = 10;
         private const string SIN_HORA = "--:--";
 
+        private static readonly object _candado = new object();
         private static string _nombre = "";
         private static string _etapa = "";
         private static DateTime _inicio;
@@ -1670,6 +1678,8 @@ namespace ConvertidorGeometrias
 
         public static void Encabezado(string titulo, string descripcion, string[][] rutas)
         {
+            lock (_candado)
+            {
             Console.WriteLine();
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine(new string('=', 88));
@@ -1698,47 +1708,60 @@ namespace ConvertidorGeometrias
                             + "ETAPA".PadRight(ANCHO_ETAPA + 1)
                             + "TIEMPO".PadLeft(8));
             Console.ResetColor();
+            }
         }
 
         /// <summary>Abre el renglon del proyecto y deja anotada la hora de inicio.</summary>
         public static void FilaInicio(string nombre, string etapa)
         {
-            _nombre = nombre ?? "";
-            _etapa = etapa ?? "";
-            _inicio = DateTime.Now;
-            _pct = 0;
-            Pintar(false, TimeSpan.Zero, true, null);
+            lock (_candado)
+            {
+                _nombre = nombre ?? "";
+                _etapa = etapa ?? "";
+                _inicio = DateTime.Now;
+                _pct = 0;
+                Pintar(false, TimeSpan.Zero, true, null);
+            }
         }
 
         public static void FilaProgreso(int pct)
         {
-            _pct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
-            Pintar(false, TimeSpan.Zero, true, null);
+            lock (_candado)
+            {
+                _pct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
+                Pintar(false, TimeSpan.Zero, true, null);
+            }
         }
 
         /// <summary>Avance + cambio de etapa, para los procesos que pasan por varias fases.</summary>
         public static void FilaProgreso(int pct, string etapa)
         {
-            if (!string.IsNullOrEmpty(etapa)) _etapa = etapa;
-            FilaProgreso(pct);
+            lock (_candado)
+            {
+                if (!string.IsNullOrEmpty(etapa)) _etapa = etapa;
+                _pct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
+                Pintar(false, TimeSpan.Zero, true, null);
+            }
         }
 
         /// <summary>
         /// Cierra el renglon: completa la hora de fin, la duracion y el resumen, y baja de linea.
         ///
-        /// En EXITO el resumen ocupa la columna ETAPA, que ya cumplio su funcion de decir que
-        /// estaba haciendo. En ERROR no: el mensaje de excepcion casi siempre pasa los 20
-        /// caracteres de la columna y recortarlo lo vuelve inservible ("No se puede leer m~"),
-        /// asi que la columna dice ERROR y el texto completo se escribe al final del renglon,
-        /// donde puede extenderse sin desalinear las columnas.
+        /// El resumen (y el mensaje de error) van SIEMPRE al final del renglon, nunca a la columna
+        /// ETAPA: los dos suelen pasar los 20 caracteres de la columna y recortarlos los vuelve
+        /// inservibles ("11 planos (0N 11E 0~", "No se puede leer m~"). Al final pueden extenderse
+        /// sin desalinear ninguna de las columnas de arriba.
         /// </summary>
         public static void FilaFin(string nombre, TimeSpan t, bool ok, string resumen)
         {
-            if (!string.IsNullOrEmpty(nombre)) _nombre = nombre;
-            if (ok) _pct = 100;
-            _etapa = ok ? (resumen ?? "") : "ERROR";
-            Pintar(true, t, ok, DateTime.Now, ok ? null : resumen);
-            Console.WriteLine();
+            lock (_candado)
+            {
+                if (!string.IsNullOrEmpty(nombre)) _nombre = nombre;
+                if (ok) _pct = 100;
+                _etapa = ok ? "listo" : "ERROR";
+                Pintar(true, t, ok, DateTime.Now, resumen);
+                Console.WriteLine();
+            }
         }
 
         private static void Pintar(bool terminado, TimeSpan t, bool ok, DateTime? fin)
