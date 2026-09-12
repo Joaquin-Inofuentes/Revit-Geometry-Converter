@@ -215,6 +215,8 @@ namespace ConvertidorGeometrias
                         ultimaPasadaFallidos = DateTime.Now;
                     }
 
+                    Consola.Esperando(0);
+                    Consola.Esperando(0);
                     Thread.Sleep(500); // Pausa de escucha
                 }
             }
@@ -1660,11 +1662,8 @@ namespace ConvertidorGeometrias
     ///   "SO_DU  08:09  [SO_DU  ##------[] ##------ 25%]  25%  generando..SO_DU  08:09..."
     /// Los otros cuatro post-procesadores son monohilo y el candado no les cuesta nada.
     /// </summary>
-    public static class Consola
+            public static class Consola
     {
-        private const int ANCHO_NOMBRE = 22;
-        private const int ANCHO_ETAPA = 20;
-        private const int ANCHO_BARRA = 10;
         private const string SIN_HORA = "--:--";
 
         private static readonly object _candado = new object();
@@ -1672,6 +1671,11 @@ namespace ConvertidorGeometrias
         private static string _etapa = "";
         private static DateTime _inicio;
         private static int _pct;
+        
+        private static DateTime? _ultimoFin = null;
+        private static int _esperandoIndex = 0;
+        private static char[] _spinner = new[] { '\\', '|', '/', '-' };
+        private static bool _enEsperando = false;
 
         /// <summary>Hora en que arranco el proyecto en curso; la usa el log para su columna HoraInicio.</summary>
         public static DateTime InicioActual { get { return _inicio; } }
@@ -1680,42 +1684,57 @@ namespace ConvertidorGeometrias
         {
             lock (_candado)
             {
-            Console.WriteLine();
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine(new string('=', 88));
-            Console.WriteLine("  MIP  -  " + titulo);
-            Console.ResetColor();
-            Console.ForegroundColor = ConsoleColor.Gray;
-            foreach (string linea in Envolver(descripcion, 84)) Console.WriteLine("  " + linea);
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine(new string('-', 88));
-            Console.ResetColor();
-            foreach (string[] r in rutas)
-            {
-                Console.ForegroundColor = ConsoleColor.DarkGray;
-                Console.Write("  [" + r[2].PadRight(2) + "] " + r[0].PadRight(8) + " ");
+                Console.WriteLine();
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine(new string('=', 88));
+                Console.WriteLine("  MIP  -  " + titulo);
+                Console.ResetColor();
                 Console.ForegroundColor = ConsoleColor.Gray;
-                Console.WriteLine(r[1]);
-            }
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine(new string('=', 88));
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            // Los anchos siguen EXACTAMENTE los de Pintar(); si se toca uno hay que tocar el otro.
-            Console.WriteLine("  " + "INICIO".PadRight(8) + "FIN".PadRight(7)
-                            + "PROYECTO".PadRight(ANCHO_NOMBRE + 1)
-                            + "AVANCE".PadRight(ANCHO_BARRA + 3)
-                            + "%".PadLeft(4) + "  "
-                            + "ETAPA".PadRight(ANCHO_ETAPA + 1)
-                            + "TIEMPO".PadLeft(8));
-            Console.ResetColor();
+                foreach (string linea in Envolver(descripcion, 84)) Console.WriteLine("  " + linea);
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine(new string('-', 88));
+                Console.ResetColor();
+                foreach (string[] r in rutas)
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.Write("  [" + r[2].PadRight(2) + "] " + r[0].PadRight(8) + " ");
+                    Console.ForegroundColor = ConsoleColor.Gray;
+                    Console.WriteLine(r[1]);
+                }
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine(new string('=', 88));
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine("DELTA\tINICIO\tFIN\tPROYECTO\tAVANCE\tETAPA\tTIEMPO\tDETALLE");
+                Console.ResetColor();
             }
         }
 
-        /// <summary>Abre el renglon del proyecto y deja anotada la hora de inicio.</summary>
+        public static void Esperando(int pendientes)
+        {
+            lock (_candado)
+            {
+                _enEsperando = true;
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.Write("\rEsperando cambios " + _spinner[_esperandoIndex % _spinner.Length] + " " + (pendientes > 0 ? $"({pendientes} pendientes)" : "") + "    ");
+                Console.ResetColor();
+                _esperandoIndex++;
+            }
+        }
+        
+        private static void BorrarEsperando()
+        {
+            if (_enEsperando)
+            {
+                Console.Write("\r" + new string(' ', 50) + "\r");
+                _enEsperando = false;
+            }
+        }
+
         public static void FilaInicio(string nombre, string etapa)
         {
             lock (_candado)
             {
+                BorrarEsperando();
                 _nombre = nombre ?? "";
                 _etapa = etapa ?? "";
                 _inicio = DateTime.Now;
@@ -1728,39 +1747,35 @@ namespace ConvertidorGeometrias
         {
             lock (_candado)
             {
+                BorrarEsperando();
                 _pct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
                 Pintar(false, TimeSpan.Zero, true, null);
             }
         }
 
-        /// <summary>Avance + cambio de etapa, para los procesos que pasan por varias fases.</summary>
         public static void FilaProgreso(int pct, string etapa)
         {
             lock (_candado)
             {
+                BorrarEsperando();
                 if (!string.IsNullOrEmpty(etapa)) _etapa = etapa;
                 _pct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
                 Pintar(false, TimeSpan.Zero, true, null);
             }
         }
 
-        /// <summary>
-        /// Cierra el renglon: completa la hora de fin, la duracion y el resumen, y baja de linea.
-        ///
-        /// El resumen (y el mensaje de error) van SIEMPRE al final del renglon, nunca a la columna
-        /// ETAPA: los dos suelen pasar los 20 caracteres de la columna y recortarlos los vuelve
-        /// inservibles ("11 planos (0N 11E 0~", "No se puede leer m~"). Al final pueden extenderse
-        /// sin desalinear ninguna de las columnas de arriba.
-        /// </summary>
         public static void FilaFin(string nombre, TimeSpan t, bool ok, string resumen)
         {
             lock (_candado)
             {
+                BorrarEsperando();
                 if (!string.IsNullOrEmpty(nombre)) _nombre = nombre;
                 if (ok) _pct = 100;
                 _etapa = ok ? "listo" : "ERROR";
-                Pintar(true, t, ok, DateTime.Now, resumen);
+                DateTime fin = DateTime.Now;
+                Pintar(true, t, ok, fin, resumen);
                 Console.WriteLine();
+                _ultimoFin = fin;
             }
         }
 
@@ -1773,48 +1788,45 @@ namespace ConvertidorGeometrias
         {
             string sIni = _inicio == default(DateTime) ? SIN_HORA : _inicio.ToString("HH:mm");
             string sFin = fin.HasValue ? fin.Value.ToString("HH:mm") : SIN_HORA;
-
-            int llenos = (int)Math.Round(_pct / 100.0 * ANCHO_BARRA);
-            if (llenos < 0) llenos = 0;
-            if (llenos > ANCHO_BARRA) llenos = ANCHO_BARRA;
-
-            Console.Write("\r");
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write("  " + sIni.PadRight(8) + sFin.PadRight(7));
-
-            Console.ForegroundColor = ok ? ConsoleColor.Gray : ConsoleColor.Red;
-            Console.Write(Recortar(_nombre, ANCHO_NOMBRE) + " ");
-
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write("[");
-            Console.ForegroundColor = !ok ? ConsoleColor.Red : (terminado ? ConsoleColor.Green : ConsoleColor.Cyan);
-            Console.Write(new string('#', llenos) + new string('-', ANCHO_BARRA - llenos));
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write("] ");
-
-            Console.ForegroundColor = !ok ? ConsoleColor.Red : (terminado ? ConsoleColor.Green : ConsoleColor.Gray);
-            Console.Write(ok ? string.Format("{0,3}%", _pct) : " ERR");
-
-            Console.ForegroundColor = !ok ? ConsoleColor.Red : ConsoleColor.DarkGray;
-            Console.Write("  " + Recortar(_etapa, ANCHO_ETAPA) + " ");
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write(string.Format("{0,8}", terminado ? Duracion(t) : "-"));
-            if (!string.IsNullOrEmpty(cola))
+            
+            string sDelta = "";
+            if (_ultimoFin.HasValue)
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.Write("   " + cola.Replace('\n', ' ').Replace('\r', ' '));
+                TimeSpan delta = _inicio - _ultimoFin.Value;
+                sDelta = $"{(int)delta.TotalMinutes:D2}:{delta.Seconds:D2}";
             }
+            else
+            {
+                sDelta = "00:00";
+            }
+
+            int llenos = (int)Math.Round(_pct / 100.0 * 10);
+            if (llenos < 0) llenos = 0;
+            if (llenos > 10) llenos = 10;
+            
+            string barraAvance = "";
+            if (terminado && ok) {
+                barraAvance = $"Finalizado {sDelta}";
+                sDelta = ""; // Se limpia del principio segun ejemplo
+            } else {
+                barraAvance = $"[{new string('#', llenos)}{new string('-', 10 - llenos)}] {_pct}%";
+            }
+
+            // Limpiamos linea
+            Console.Write("\r" + new string(' ', 100) + "\r");
+            
+            if (ok) Console.ForegroundColor = ConsoleColor.Gray;
+            else Console.ForegroundColor = ConsoleColor.Red;
+            
+            string dur = terminado ? Duracion(t) : "-";
+            
+            string res = $"{sDelta}\t{sIni}\t{sFin}\t{_nombre}\t{barraAvance}\t{_etapa}\t{dur}";
+            if (!string.IsNullOrEmpty(cola)) res += "\t" + cola;
+            
+            Console.Write(res);
             Console.ResetColor();
         }
 
-        private static string Recortar(string s, int ancho)
-        {
-            if (s == null) s = "";
-            if (s.Length > ancho) return s.Substring(0, ancho - 1) + "~";
-            return s.PadRight(ancho);
-        }
-
-        /// <summary>Tiempo legible: "2.4s" hasta un minuto, "3m 12s" de ahi para arriba.</summary>
         public static string Duracion(TimeSpan t)
         {
             if (t.TotalSeconds < 60) return t.TotalSeconds.ToString("F1") + "s";
@@ -1823,7 +1835,7 @@ namespace ConvertidorGeometrias
 
         private static string[] Envolver(string texto, int ancho)
         {
-            var lineas = new List<string>();
+            var lineas = new System.Collections.Generic.List<string>();
             string actual = "";
             foreach (string palabra in (texto ?? "").Split(' '))
             {
@@ -1835,4 +1847,6 @@ namespace ConvertidorGeometrias
             return lineas.ToArray();
         }
     }
+
+
 }
