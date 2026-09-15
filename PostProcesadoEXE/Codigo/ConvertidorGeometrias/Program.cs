@@ -38,6 +38,15 @@ namespace ConvertidorGeometrias
         public float HatchAngle;
         public float HatchSpacing;
         public bool HasHatch { get { return HatchSpacing > 0f; } }
+
+        // Nombre de Familia y de Tipo del ElementType de Revit (formato .bin v7+).
+        // "" = el elemento no tiene tipo (habitaciones, geometría in-situ) o el .bin es v6 o
+        // anterior. En el .tbv se deduplican en una tabla de nombres; "" se escribe como -1.
+        // CUIDADO: cada vez que se construye un MeshData a partir de otro (fusión por pieza,
+        // clonado con normales, decimado) hay que copiar estos dos campos o el nombre se pierde
+        // en silencio y el visor muestra la ficha vacía sin ningún error.
+        public string FamilyName = "";
+        public string TypeName = "";
         public List<Vector3> Vertices = new List<Vector3>();
         public List<Vector3> Normals = new List<Vector3>();
         public List<int> Indices = new List<int>();
@@ -315,6 +324,25 @@ namespace ConvertidorGeometrias
                 // borrarlo se aparta, para poder diagnosticar y reprocesar.
                 ApartarFallido(filePath);
             }
+            finally
+            {
+                LiberarMemoriaEntreModelos();
+            }
+        }
+
+        // Este proceso es un watcher perpetuo y las mallas son arrays > 85 KB: viven en el LOH,
+        // que el GC no compacta solo. Sin esto el proceso queda en reposo con el residuo del
+        // último modelo grande (medido: ~600 MB tras un IS de 8 M de vértices).
+        private static void LiberarMemoriaEntreModelos()
+        {
+            long antes = GC.GetTotalMemory(false);
+            System.Runtime.GCSettings.LargeObjectHeapCompactionMode =
+                System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            long despues = GC.GetTotalMemory(false);
+            Log($"[MEM] Managed: {antes / 1048576} MB -> {despues / 1048576} MB | Privada: {Process.GetCurrentProcess().PrivateMemorySize64 / 1048576} MB");
         }
 
         private static string CarpetaFallidos => Path.Combine(CARPETA_TEMP, "_Fallidos");
@@ -637,6 +665,7 @@ namespace ConvertidorGeometrias
                 ColR = src.ColR, ColG = src.ColG, ColB = src.ColB, ColA = src.ColA,
                 HasColor = src.HasColor,
                 HatchAngle = src.HatchAngle, HatchSpacing = src.HatchSpacing,
+                FamilyName = src.FamilyName, TypeName = src.TypeName,
                 RoomLevel = src.RoomLevel,
                 RoomDepartment = src.RoomDepartment,
                 RoomName = src.RoomName,
@@ -678,6 +707,9 @@ namespace ConvertidorGeometrias
                     // Todas las caras del grupo comparten (GUID, MaterialId), así que comparten
                     // material y por lo tanto patrón: el de la primera vale para la pieza entera.
                     HatchAngle = first.HatchAngle, HatchSpacing = first.HatchSpacing,
+                    // Todas las caras del grupo son del MISMO elemento (el PieceKey empieza por
+                    // el GUID), así que familia y tipo de la primera valen para la pieza entera.
+                    FamilyName = first.FamilyName, TypeName = first.TypeName,
                     // Sin esto la metadata de habitación se pierde acá y el JSON sale con
                     // Level/Department/Name vacíos (el visor descarta las que no tienen Level).
                     RoomLevel = first.RoomLevel,
@@ -694,6 +726,11 @@ namespace ConvertidorGeometrias
                         mergedMesh.Indices.Add(index + vertexOffset);
                     }
                     vertexOffset += mesh.Vertices.Count;
+                    // Ya se copió a mergedMesh y nadie vuelve a leer la malla de entrada; soltar las
+                    // listas acá evita tener el dump entero vivo junto a su copia fusionada
+                    // (~220 MB en un modelo de instalaciones de 8 M de vértices).
+                    mesh.Vertices = null;
+                    mesh.Indices = null;
                 }
 
                 stats.VertsIn += mergedMesh.Vertices.Count;
@@ -841,7 +878,10 @@ namespace ConvertidorGeometrias
                 CategoryId = source.CategoryId,
                 ColR = source.ColR, ColG = source.ColG, ColB = source.ColB, ColA = source.ColA,
                 HasColor = source.HasColor,
-                HatchAngle = source.HatchAngle, HatchSpacing = source.HatchSpacing
+                HatchAngle = source.HatchAngle, HatchSpacing = source.HatchSpacing,
+                // Mismo riesgo que tuvo CategoryId acá: sin copiarlos, toda pieza decimada
+                // (puertas, ventanas, mobiliario) sale al .tbv con familia/tipo -1.
+                FamilyName = source.FamilyName, TypeName = source.TypeName
             };
 
             foreach (var v in decimatedMdMesh.Vertices)
@@ -1026,6 +1066,9 @@ namespace ConvertidorGeometrias
         // v5: las coordenadas vienen en METROS (v4 y anteriores venían en pies).
         // v6: cada bloque agrega el patrón de superficie (2 floats: ángulo rad, separación m)
         //     justo después del RGBA. Sólo los muros lo traen distinto de cero.
+        // v7: cada bloque agrega DOS strings length-prefixed (BinaryWriter.Write(string)) con el
+        //     nombre de Familia y de Tipo, justo DESPUÉS del categoryId y ANTES del RGBA.
+        //     "" cuando el elemento no tiene ElementType (habitaciones, in-situ).
         static List<MeshData> LeerBinario(string path, PipelineStats stats)
         {
             var meshes = new List<MeshData>();
@@ -1033,7 +1076,7 @@ namespace ConvertidorGeometrias
             using (var fs = File.OpenRead(path))
             using (var reader = new BinaryReader(fs))
             {
-                bool v2 = false, v3 = false, v4 = false, v5 = false, v6 = false;
+                bool v2 = false, v3 = false, v4 = false, v5 = false, v6 = false, v7 = false;
                 if (fs.Length >= 8)
                 {
                     int magic = reader.ReadInt32();
@@ -1045,6 +1088,7 @@ namespace ConvertidorGeometrias
                         v4 = version >= 4;
                         v5 = version >= 5;
                         v6 = version >= 6;
+                        v7 = version >= 7;
                         stats.FormatVersion = version;
                     }
                     else
@@ -1078,6 +1122,14 @@ namespace ConvertidorGeometrias
                     if (v3)
                     {
                         mesh.CategoryId = reader.ReadInt32();
+                    }
+
+                    // v7: familia y tipo van entre el categoryId y el RGBA, no al final del
+                    // bloque. Leerlos fuera de ese punto desalinea todo el stream.
+                    if (v7)
+                    {
+                        mesh.FamilyName = reader.ReadString() ?? "";
+                        mesh.TypeName = reader.ReadString() ?? "";
                     }
 
                     if (v2)
@@ -1422,7 +1474,7 @@ namespace ConvertidorGeometrias
         //   - Compacto: normales en int8 (snorm), índices uint16 cuando se puede.
         //
         // Layout (little-endian):
-        //   Header: int32 magic('TBTV'=0x56544254), int32 version(2),
+        //   Header: int32 magic('TBTV'=0x56544254), int32 version(4),
         //           float32 unitsPerMeter,
         //           int32 matCount, int32 meshCount, int32 instCount,
         //           float32 sceneMin[3], float32 sceneMax[3]
@@ -1440,20 +1492,30 @@ namespace ConvertidorGeometrias
         // fragmento en el shader, así que el patrón se ve nítido a cualquier zoom y suma
         // 8 bytes por material (no por pieza) al archivo. spacing <= 0 = sin patrón.
         // Sólo los muros traen patrón, y el visor además lo enciende sólo en esa categoría.
+        // v4 (2026-09): agrega la TABLA DE NOMBRES (familias y tipos de Revit) y dos índices por
+        // instancia. Los nombres se deduplican: un modelo con 40.000 instancias suele tener unos
+        // pocos cientos de nombres distintos, así que la tabla pesa kilobytes y no megabytes.
+        // La tabla va DESPUÉS de los materiales y ANTES del pool de mallas.
         //   Materiales × matCount: int32 materialId, uint8 R,G,B,A,
         //                          (v3+) float32 hatchAngle, float32 hatchSpacing
+        //   (v4+) Tabla de nombres: int32 nameCount,
+        //                           luego nameCount × (uint16 len, byte[len] nombre UTF8)
+        //         NO contiene la cadena vacía: "sin dato" se codifica como índice -1.
         //   Meshes (pool) × meshCount:
         //           int32 vertexCount, uint8 idx16(1/0), int32 triCount,
         //           float32 positions[vc*3], int8 normals[vc*3],
         //           (idx16? uint16 : uint32) indices[triCount*3]
         //   Instancias × instCount:
         //           int32 meshIndex, int32 elementId, int32 categoryId, int32 materialIndex,
+        //           (v4+) int32 familyIdx, int32 typeIdx,   // índice en la tabla de nombres, -1 = sin dato
         //           float32 tx,ty,tz, float32 gmin[3], float32 gmax[3],
         //           uint16 guidLen, byte[guidLen] guid(UTF8)
         static void ExportToViewerBin(List<MeshData> meshes, string path, PipelineStats stats)
         {
             const int MAGIC = 0x56544254; // "TBTV"
-            const int VERSION = 3;
+            const int VERSION = 4;
+            // Tope del prefijo de longitud (uint16) de cada nombre de la tabla.
+            const int NAME_MAX_BYTES = 65535;
             const float UNITS_PER_METER_OUT = 1.0f; // el pipeline siempre entrega metros de acá en más
 
             // Tabla de materiales: un color por MaterialId
@@ -1530,6 +1592,41 @@ namespace ConvertidorGeometrias
 
             stats.PoolMeshes = pool.Count;
 
+            // v4: tabla de nombres deduplicada (familias y tipos juntos en la misma tabla).
+            // Sólo se indexan los nombres de las instancias que REALMENTE se escriben, y nunca
+            // la cadena vacía: "sin dato" viaja como -1, así el visor distingue "no vino el
+            // nombre" de "el nombre es una cadena vacía" sin gastar una entrada de tabla.
+            var nameIndex = new Dictionary<string, int>(StringComparer.Ordinal);
+            var nameBytes = new List<byte[]>();
+            Func<string, int> indiceNombre = s =>
+            {
+                if (string.IsNullOrEmpty(s)) return -1;
+                int idx;
+                if (nameIndex.TryGetValue(s, out idx)) return idx;
+                byte[] b = Encoding.UTF8.GetBytes(s);
+                // El prefijo de longitud es uint16: un nombre más largo no se puede representar.
+                // Descartarlo (-1) es preferible a escribir una longitud truncada, que
+                // desalinearía el archivo entero a partir de esa entrada.
+                if (b.Length > NAME_MAX_BYTES)
+                {
+                    Log($"  AVISO: nombre de familia/tipo de {b.Length} bytes (> {NAME_MAX_BYTES}); se omite.");
+                    nameIndex[s] = -1;
+                    return -1;
+                }
+                idx = nameBytes.Count;
+                nameBytes.Add(b);
+                nameIndex[s] = idx;
+                return idx;
+            };
+
+            var instFamIdx = new List<int>(instSource.Count);
+            var instTypIdx = new List<int>(instSource.Count);
+            foreach (var m in instSource)
+            {
+                instFamIdx.Add(indiceNombre(m.FamilyName));
+                instTypIdx.Add(indiceNombre(m.TypeName));
+            }
+
             // AABB de toda la escena (para encuadre inicial del visor)
             Vector3 sMin = new Vector3(float.MaxValue), sMax = new Vector3(float.MinValue);
             for (int i = 0; i < instSource.Count; i++)
@@ -1582,6 +1679,14 @@ namespace ConvertidorGeometrias
                     if (mr.HasHatch) stats.HatchedMats++;
                 }
 
+                // v4: tabla de nombres (va entre los materiales y el pool de mallas)
+                w.Write(nameBytes.Count);
+                foreach (var nb in nameBytes)
+                {
+                    w.Write((ushort)nb.Length);
+                    w.Write(nb);
+                }
+
                 // Meshes del pool
                 foreach (var pm in pool)
                 {
@@ -1622,6 +1727,8 @@ namespace ConvertidorGeometrias
                     w.Write(m.ElementId);
                     w.Write(m.CategoryId);
                     w.Write(matIndexById[m.MaterialId]);
+                    w.Write(instFamIdx[i]); // v4: índice en la tabla de nombres, -1 = sin dato
+                    w.Write(instTypIdx[i]); // v4: idem
                     w.Write(d.X); w.Write(d.Y); w.Write(d.Z);
                     w.Write(gmin.X); w.Write(gmin.Y); w.Write(gmin.Z);
                     w.Write(gmax.X); w.Write(gmax.Y); w.Write(gmax.Z);

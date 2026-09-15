@@ -6,9 +6,9 @@ REM copiar_resultados.bat -- encola un lote de modelos para el addin MIP y deja 
 REM =================================================================================================
 REM RUTAS. Hay TRES carpetas en juego y confundirlas fue el bug que rompio este bat:
 REM
-REM   INSTALL  C:\ProgramData\Autodesk\Revit\Addins\2021\MIP
+REM   INSTALL  C:\ProgramData\Autodesk\Revit\Addins\2021\MIP  (la DEFINITIVA, todos los usuarios)
 REM            Binarios (DLL + exes del pipeline) + la semilla de resultados.txt. De SOLO LECTURA:
-REM            solo el instalador (que pide UAC) escribe ahi. Es donde vive ESTE bat, asi que se
+REM            solo el instalador y el build escriben ahi. Es donde vive ESTE bat, asi que se
 REM            deduce con %~dp0 y no se hardcodea: si manana el instalador cambia de carpeta, el
 REM            bat la sigue sin tocar una linea.
 REM
@@ -17,13 +17,11 @@ REM            Estado en runtime del addin: config.json, pedidos.txt, tomados.tx
 REM            Es por-usuario y escribible sin elevar (ver ConfigurationManager._runtimeDataFolder y la
 REM            historia larga en tools\InstallerApp.cs).
 REM
-REM   LEGACY   %APPDATA%\Autodesk\Revit\Addins\2021\MIP
-REM            La instalacion vieja POR USUARIO. YA NO EXISTE: el instalador 1.1.0 la borra en
-REM            MigrarInstalacionVieja(). Este bat apuntaba ahi -- a una carpeta inexistente -- asi que
-REM            "if exist tomados.txt" daba falso, "if exist resultados.txt" daba falso, e imprimia
-REM            "ERROR: resultados.txt no existe" y salia sin encolar NADA. El sintoma era exactamente
-REM            "abre Revit pero no procesa": el paso 1 (lanzar Revit) si funcionaba, porque no depende
-REM            de %MIP%. NO volver a usar %APPDATA% aca.
+REM   OJO      Hasta 2026-09 el estado vivia AL LADO de los binarios (en INSTALL). Este bat apuntaba
+REM            ahi, y cuando el estado se mudo a DATA, "if exist tomados.txt" daba falso, "if exist
+REM            resultados.txt" daba falso, e imprimia "ERROR: resultados.txt no existe" y salia sin
+REM            encolar NADA. El sintoma era "abre Revit pero no procesa". El estado va SIEMPRE a DATA;
+REM            el instalador migra solo lo que haya quedado en INSTALL (MigrarEstadoLegacy).
 set "INSTALL=%~dp0"
 set "DATA=%LOCALAPPDATA%\MIP"
 
